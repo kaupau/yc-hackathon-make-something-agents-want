@@ -108,3 +108,9 @@
 .nb-profit b { color: var(--fg); font-weight: 600; }
 .nb-profit .net { color: var(--accent); font-weight: 600; font-size: 15px; }
 .nb-map-sold { fill: var(--accent); stroke: none; opacity: 0.9; }
+
+.nb-demand { color: var(--fg-muted); }
+.nb-demand.sells-fast { color: var(--accent); }
+.nb-demand.slow { color: var(--warn); }
+.nb-comps { margin: 0 0 6px; font-size: 12.5px; color: var(--fg-dim); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.nb-comps a { color: var(--fg-muted); text-decoration: none; border-bottom: 1px solid var(--divider); }

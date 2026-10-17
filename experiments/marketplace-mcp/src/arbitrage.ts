@@ -1,14 +1,28 @@
 import { adapters } from "./adapters/index.js";
 import { catchRisk, relevance, samePhoto, type CatchReason } from "./jev.js";
-import { FEES, tier, type Listing, type Tier } from "./types.js";
+import { FEES, inferSize, tier, type Listing, type Tier } from "./types.js";
 
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null; };
 const r2 = (n: number) => Math.round(n * 100) / 100;
+const STOP = new Set(["the","a","an","and","or","of","for","with","in","on","to","men","mens","women","womens","size","new","used","authentic","genuine","rare","vintage"]);
+const toks = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9.+ ]/g, " ").split(/\s+/).filter((w) => w.length > 1 && !STOP.has(w)));
+/** Overlap coefficient on title tokens, nudged by size agreement: the comps that are the same model and size count most. */
+const similarity = (a: Listing, b: Listing) => {
+  const A = toks(a.title), B = toks(b.title); let inter = 0; for (const w of A) if (B.has(w)) inter++;
+  let sim = inter / Math.max(1, Math.min(A.size, B.size));
+  const sa = a.size?.toLowerCase().replace(/^us\s*/, ""), sb = b.size?.toLowerCase().replace(/^us\s*/, "");
+  if (sa && sb) sim += sa === sb ? 0.2 : -0.25;
+  return sim;
+};
+/** Median after dropping prices outside 1.5×IQR, so one mis-tagged comp cannot set the sell price. */
+const trimmedMedian = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); if (s.length < 4) return median(s); const q1 = s[Math.floor(s.length / 4)], q3 = s[Math.floor((3 * s.length) / 4)], iqr = q3 - q1; const t = s.filter((x) => x >= q1 - 1.5 * iqr && x <= q3 + 1.5 * iqr); return median(t.length >= 3 ? t : s); };
+/** Inbound shipping when the listing does not state it (buyer-pays norms, 2026). */
+const SHIP_IN: Record<string, number> = { ebay: 10, poshmark: 8, mercari: 6, grailed: 12, amazon: 0, vinted: 6, depop: 6 };
 
 export interface Opportunity {
   listing: Listing; tier: Tier;
   buy_usd: number; ship_usd: number;
-  sell_est_usd: number; comps_n: number; comps_venue: string; comps_tier: string; fee_pct: number;
+  sell_est_usd: number; comps_n: number; comps_venue: string; comps_tier: string; comp_basis: string; comp_sample: { title: string; usd: number; url: string; size?: string | null }[]; demand: number; demand_label: string; fee_pct: number; ship_assumed?: boolean;
   net_profit_usd: number; margin_pct: number;
   // kept for the board and older clients
   reference_usd: number; reference_from: string; spread_usd: number; spread_pct: number;
@@ -31,8 +45,8 @@ export async function arbitrage(query: string, opts: { limit?: number; min_sprea
     Promise.all(soldVenues.map(async (n) => { try { return await adapters[n].search(query, { limit: 40, sold: true }); } catch (e: any) { soldErrors.push(`${n} sold: ${e.message.split("\n")[0]}`); return [] as Listing[]; } })),
   ]);
   const errors = [...live.flat().filter((l) => l.id === "error").map((l) => `${l.marketplace}: ${l.title}`), ...soldErrors];
-  const listings = live.flat().filter((l) => l.id !== "error" && l.price_usd !== null && l.price_usd! > 0 && !l.sponsored && !l.sold);
-  const sold = soldSets.flat().filter((s) => (s.sold_price_usd ?? s.price_usd) != null).map((s) => ({ ...s, tier: tier(s.condition, s.title), price: (s.sold_price_usd ?? s.price_usd)! }));
+  const listings = live.flat().filter((l) => l.id !== "error" && l.price_usd !== null && l.price_usd! > 0 && !l.sponsored && !l.sold).map((l) => ({ ...l, size: l.size ?? inferSize(l.title) }));
+  const sold = soldSets.flat().filter((s) => (s.sold_price_usd ?? s.price_usd) != null).map((s) => ({ ...s, size: s.size ?? inferSize(s.title), tier: tier(s.condition, s.title), price: (s.sold_price_usd ?? s.price_usd)! }));
 
   // relevance on both sides so a kids' jacket or a MoonSwatch never becomes a comp
   const [relLive, relSold] = await Promise.all([relevance(query, listings), relevance(query, sold)]);
@@ -49,15 +63,24 @@ export async function arbitrage(query: string, opts: { limit?: number; min_sprea
     const pool = sameTier.length >= minComps ? sameTier : comps;
     const compsTier = sameTier.length >= minComps ? t : "any";
     if (pool.length < minComps) continue;
-    // resell where the comps are: the venue with the most comps for this tier
-    const venueCount: Record<string, number> = {}; for (const c of pool) venueCount[c.marketplace] = (venueCount[c.marketplace] ?? 0) + 1;
+    // closest comps first: same model words, same size; need at least minComps that look like the same thing
+    const ranked = pool.map((c) => ({ c, sim: similarity(l, c) })).sort((a, b) => b.sim - a.sim);
+    const close = ranked.filter((x) => x.sim >= 0.34).slice(0, Math.max(8, minComps));
+    const chosen = (close.length >= minComps ? close : ranked.slice(0, Math.max(5, minComps))).map((x) => x.c);
+    const basis = close.length >= minComps ? `${chosen.length} closest matches by title${l.size ? ` and size ${l.size}` : ""}` : `${chosen.length} nearest comps (titles only loosely match)`;
+    // resell where those comps sold: the venue with the most of them
+    const venueCount: Record<string, number> = {}; for (const c of chosen) venueCount[c.marketplace] = (venueCount[c.marketplace] ?? 0) + 1;
     const venue = Object.entries(venueCount).sort((a, b) => b[1] - a[1])[0][0];
-    const venuePool = pool.filter((c) => c.marketplace === venue);
-    const sell = median((venuePool.length >= minComps ? venuePool : pool).map((c) => c.price))!;
-    const fee = FEES[venue] ?? 0.15; const ship = l.shipping_usd ?? 0; const buy = l.price_usd!;
+    const venuePool = chosen.filter((c) => c.marketplace === venue);
+    const basisPool = venuePool.length >= minComps ? venuePool : chosen;
+    const sell = trimmedMedian(basisPool.map((c) => c.price))!;
+    const fee = FEES[venue] ?? 0.15; const shipAssumed = l.shipping_usd == null; const ship = l.shipping_usd ?? SHIP_IN[l.marketplace] ?? 8; const buy = l.price_usd!;
     const net = sell * (1 - fee) - buy - ship; const margin = net / (buy + ship);
     if (net < minNet || margin < minMargin) continue;
-    opps.push({ listing: l, tier: t, buy_usd: buy, ship_usd: ship, sell_est_usd: Math.round(sell), comps_n: (venuePool.length >= minComps ? venuePool : pool).length, comps_venue: venue, comps_tier: compsTier, fee_pct: fee, net_profit_usd: Math.round(net), margin_pct: r2(margin), reference_usd: Math.round(sell), reference_from: `median of ${(venuePool.length >= minComps ? venuePool : pool).length} sold on ${venue} (${compsTier})`, spread_usd: Math.round(sell - buy), spread_pct: r2((sell - buy) / sell), relevance: r2(r) });
+    const liveOnVenue = byMarket[venue]?.n ?? 0, soldOnVenue = byMarket[venue]?.sold_n ?? 0;
+    const demand = soldOnVenue / Math.max(1, liveOnVenue);
+    const demandLabel = demand >= 1 ? "sells fast" : demand >= 0.4 ? "steady" : "slow";
+    opps.push({ listing: l, tier: t, buy_usd: buy, ship_usd: ship, ship_assumed: shipAssumed, sell_est_usd: Math.round(sell), comps_n: basisPool.length, comps_venue: venue, comps_tier: compsTier, comp_basis: basis, comp_sample: basisPool.slice(0, 3).map((c) => ({ title: c.title.slice(0, 70), usd: c.price, url: c.url, size: c.size ?? null })), demand: r2(demand), demand_label: demandLabel, fee_pct: fee, net_profit_usd: Math.round(net), margin_pct: r2(margin), reference_usd: Math.round(sell), reference_from: `trimmed median of ${basisPool.length} sold on ${venue} (${compsTier}; ${basis})`, spread_usd: Math.round(sell - buy), spread_pct: r2((sell - buy) / sell), relevance: r2(r) });
   }
   opps.sort((a, b) => b.net_profit_usd - a.net_profit_usd);
   const top = opps.slice(0, Math.max(opts.limit ?? 5, 8));

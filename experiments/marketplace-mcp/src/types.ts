@@ -61,3 +61,15 @@ export const tier = (cond: string | null | undefined, title = ""): Tier => {
 };
 /** Seller-side fee share when reselling on a venue (platform + payment), 2026 public rates, approximate. */
 export const FEES: Record<string, number> = { poshmark: 0.2, mercari: 0.13, ebay: 0.136, grailed: 0.12, vinted: 0.0, amazon: 0.15, depop: 0.13 };
+
+/** Pull a garment/shoe size out of a title when the marketplace did not expose one ("Men's M", "size L", "Sz 10.5", "XL"). */
+export const inferSize = (title: string): string | null => {
+  const t = ` ${title} `;
+  const m = t.match(/\b(?:size|sz)[:\s]*((?:us\s*)?(?:\d{1,2}(?:\.5)?[a-z]?|xxs|xs|s|m|l|xl|xxl|xxxl|2xl|3xl)(?:\/[a-z0-9]+)?)\b/i)
+    ?? t.match(/\b(?:men'?s|women'?s|mens|womens|unisex)\s+(xxs|xs|s|m|l|xl|xxl|xxxl|small|medium|large|x-large|xlarge)\b/i)
+    ?? t.match(/\s(xxs|xs|xl|xxl|xxxl|2xl|3xl)\s/i)
+    ?? t.match(/\b(small|medium|large|x-large)\b/i);
+  if (!m) return null;
+  const v = m[1].toLowerCase().replace(/^us\s*/, "");
+  return ({ small: "s", medium: "m", large: "l", "x-large": "xl", xlarge: "xl" } as Record<string, string>)[v] ?? v;
+};
