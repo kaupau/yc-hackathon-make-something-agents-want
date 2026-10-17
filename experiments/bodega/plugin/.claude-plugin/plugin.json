@@ -1,11 +1,18 @@
 {
   "name": "bodega",
-  "displayName": "Bodega",
   "version": "0.1.0",
   "description": "Find, trial, compare and buy developer tools (email, database, auth, search, queues, voice, phone) from the Bodega store, inside a budget your human sets",
-  "author": { "name": "Kaushik + Sami" },
+  "author": {
+    "name": "Kaushik + Sami"
+  },
   "repository": "https://github.com/kaupau/yc-hackathon-make-something-agents-want",
-  "keywords": ["mcp", "marketplace", "developer-tools", "trials", "payments"],
+  "keywords": [
+    "mcp",
+    "marketplace",
+    "developer-tools",
+    "trials",
+    "payments"
+  ],
   "userConfig": {
     "bodega_url": {
       "type": "string",
