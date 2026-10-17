@@ -21,3 +21,11 @@ Fetch these before writing code that touches a sponsor product:
 - No secrets in the repo: keys live in Doppler (`doppler run -p bodega -c dev -- ...`) or Manufact env vars. `.env*` and `.mcp-use/cloud/link.json` are gitignored.
 - Kelam is a live, funded workspace with a quota: check `GET /quotas` before test calls, and prefix test-call prompts with "hackathon test".
 - Stripe stays in test mode for the whole event.
+
+## Bodega app (merged from `codex/storefront`)
+
+The working Bodega platform lives in `bodega/` at the repo root (Railway deploys from there), with InsForge migrations in `migrations/`. `AGENTS.md` holds the InsForge and Stripe Projects CLI rules; read it before touching either. The agent-swarm demo is `experiments/bodega/swarm/`.
+
+<!-- stripe-projects-cli managed:claude-md:start -->
+look at AGENTS.md for your rules
+<!-- stripe-projects-cli managed:claude-md:end -->

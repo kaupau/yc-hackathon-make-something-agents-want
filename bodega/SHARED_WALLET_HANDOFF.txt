@@ -1,0 +1,108 @@
+SHARED WALLET HANDOFF (worker -> root)
+=====================================
+Status: implemented and tested locally against a fake RPC seam. Nothing committed and
+nothing applied to the cloud. Local SQLite is still the default.
+
+Files
+-----
+- migrations/20261017210001_shared-wallet.sql   NEW. One migration, no BEGIN/COMMIT.
+- bodega/src/store/insforge-wallet.ts            NEW. InsforgeWalletStore, createWalletBackend, WalletRpc seam.
+- bodega/src/store/insforge-wallet.test.ts       NEW. Fake shared-DB tests, plus an opt-in real-psql harness.
+- bodega/src/store/wallet.ts      WalletBackend interface (MaybePromise), shared helpers, small SQLite hardening.
+- bodega/src/store/storefront.ts  state: WalletBackend; every call awaited; `ready` promise; result() is async.
+- bodega/src/store/mpp.ts         awaits only (no change to the payment-provider interface).
+- bodega/src/server.ts            small factory hook (see "Merging server.ts" below).
+- bodega/src/store/storefront.test.ts  awaits, plus one new SQLite invariant test.
+
+Enabling it
+-----------
+BODEGA_WALLET_BACKEND=insforge
+INSFORGE_URL=...                 (server only)
+INSFORGE_API_KEY=...             (server only, admin client)
+BODEGA_PROJECT_KEY_SECRET=...    >= 32 bytes, SAME on every node (e.g. `openssl rand -base64 48`)
+If BODEGA_WALLET_BACKEND is unset (or "sqlite"/"local"), the existing SQLite wallet is used.
+Any other value is rejected at startup.
+On connect the store calls bodega_wallet_register_key with HMAC(secret, constant). The first node
+stores that fingerprint. A later node whose secret differs fails startup, so project keys can't
+silently diverge between nodes. The raw secret, raw project keys and raw MPP SPTs are never sent;
+only SHA-256 digests are stored.
+
+Merging server.ts (conflicts with the identity worker)
+------------------------------------------------------
+The whole integration is:
+  import { createWalletBackend, type WalletFactoryOptions } from "./store/insforge-wallet.js";
+  ApplicationOptions += wallet?: WalletBackend; walletFactory?: Omit<WalletFactoryOptions,"env"|"walletPath">
+  const state = options.wallet ?? (await createWalletBackend({ ...options.walletFactory, env, walletPath: options.walletPath }));
+  await storefront.ready;   (right after new Storefront(...))
+  webhook: `await state.hasEvent` (returns 503 if the wallet is unreachable), `await state.markEvent`
+  /admin/approvals: async handler, `await state.list(...)` (returns 503 if the wallet is unreachable)
+  close(): `await state.close()`
+  /health adds `wallet: state.kind`; homepage label shows the shared wallet when it's enabled.
+The Storefront constructor signature is unchanged (services, payments, state, options).
+
+Database design
+---------------
+Tables (public schema, RLS enabled, PUBLIC/anon/authenticated revoked, grants to project_admin only):
+  bodega_wallets, bodega_wallet_attempts, bodega_wallet_events, bodega_wallet_mpp_credentials,
+  bodega_wallet_fulfilled, bodega_wallet_signing_key (singleton fingerprint).
+Each operation is one RPC, i.e. one transaction. All RPCs are SECURITY INVOKER, have a pinned
+search_path and use schema-qualified names. EXECUTE is revoked from PUBLIC/anon/authenticated
+and granted to project_admin.
+  - reserve: takes the wallet row with SELECT ... FOR UPDATE, which serializes every admission for
+    a session. It's idempotent per (session, listing, request) and returns IDEMPOTENCY_CONFLICT if
+    the amount or payment_mode changed. Budget counts every non-declined attempt, so
+    pending/charging attempts keep their hold.
+  - ensure_session: INSERT ... ON CONFLICT DO NOTHING, so a reconnect never resets or replenishes a wallet.
+  - claim: a single conditional UPDATE using a lease from the DB clock, so only one node holds the
+    lease at a time. When a lease expires it can be re-claimed to inspect/replay the payment with
+    the same idempotency key.
+  - finish: locks the attempt row with FOR UPDATE. A paid attempt is terminal, so late failures
+    never downgrade it. Finishing an attempt still in needs_approval is refused. A paid result
+    needs a receipt matching the mode (mock:* -> mock_..., stripe:* -> pi_...) plus a key digest.
+    A receipt binds to only one attempt and can't change once recorded (RECEIPT_CONFLICT), backed
+    by a unique index.
+  - consume / bind_mpp_credential / mark_event / mark_fulfilled: atomic single statements.
+  - Money and times are bigint, CHECKed to 0..2^53-1. The adapter rejects any non-safe integer
+    as WALLET_CORRUPT and accepts digit strings in case bigint arrives as a string.
+  - Times are epoch ms from the DB clock (clock_timestamp), so node clock skew doesn't matter.
+  - Business errors come back as {error: CODE} and become StoreError(CODE). Transport or PostgREST
+    errors become StoreError("WALLET_UNAVAILABLE"). Calls are not retried automatically
+    (consume and claim are not idempotent). The SDK call has a 10s timeout.
+SQLite hardening, so both backends behave the same: the receipt must match the mode, receipts
+are bound to one attempt and immutable, finishing a needs_approval attempt is refused, and the
+first approval_url wins.
+
+Tests run here
+--------------
+npm run typecheck: OK.  npm run build: OK.  npm test: 54/54 pass (run twice). That's 45 existing
+tests plus 9 new:
+  - two InsforgeWalletStore "nodes" on one fake DB: no over-admission under concurrency,
+    idempotency and mode conflicts, reconnect can't replenish budget, exclusive leases, pending
+    keeps its hold, receipt conflicts, approval convergence, shared-secret keys that resolve on
+    the other node, atomic credits, MPP credential binding, event/fulfilled dedup, fingerprint
+    mismatch rejected.
+  - no raw token, SPT or secret ever appears in RPC args; safe-integer validation; transport error
+    -> WALLET_UNAVAILABLE; factory validation.
+  - two full createApplication nodes with BODEGA_WALLET_BACKEND=insforge: 10 concurrent buys
+    charge once, keys are shared, budget survives a reconnect with a larger cap, and an ambiguous
+    charge on node A is recovered by node B with a single fulfillment.
+NOT verified here: the SQL itself. Starting a local Postgres was not permitted in this sandbox,
+so the migration has never been executed. The fake mirrors its semantics, but please apply it
+and run the same suite against real Postgres:
+  BODEGA_WALLET_TEST_PSQL='postgresql://...non-production...' npx tsx --test src/store/insforge-wallet.test.ts
+  (runs the 4 backend-agnostic tests through psql, one connection per call, so concurrency is real)
+
+Caveats / follow-ups for root
+-----------------------------
+1. RLS has no policies. Access relies on the API-key role being the table owner or BYPASSRLS
+   (the same assumption as the existing bodega_catalog migration). If InsForge's admin role
+   is not the owner, every RPC will see zero rows. Check this right after applying.
+2. Approvals (vendor services) and the ledger mirror are still per-node local state. The shared
+   wallet stores approval_url (server-only table) so nodes converge on one link, but a decision
+   recorded on node A's local approvals store is not visible to node B. Approvals need a shared
+   backend before multi-node approval flows are fully correct.
+3. A late successful payment on an attempt that was already declined is still recorded as paid
+   (money really moved), and that can push spend over the cap. This is unchanged from SQLite.
+4. bodega_wallet_view and list return every attempt in a session (no pagination). That's fine
+   at demo scale.
+5. gen_random_uuid() needs PG13+.
