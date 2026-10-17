@@ -1,29 +1,16 @@
-import * as cheerio from "cheerio";
 import { tinyfishFetch } from "../tinyfish.js";
 import type { Adapter, Listing, SearchOptions } from "../types.js";
 import { money } from "../types.js";
 
 /**
  * eBay blocks plain curl and a local headless Chromium ("Error Page"), but TinyFish's
- * server-side render passes when a cached entry is allowed (ttl omitted). Prefer HTML +
- * cheerio when the classes survive, else parse the markdown bullets.
+ * server-side render passes when a cached entry is allowed (ttl omitted). TinyFish's HTML and
+ * JSON formats strip anchors and classes, so the markdown bullets + ordered links are parsed.
  * Upgrade path: the official Browse API (EBAY_CLIENT_ID/EBAY_CLIENT_SECRET) when a dev account exists.
  */
 function searchUrl(q: string, sold: boolean) {
   const base = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}&_sop=15`;
   return sold ? `${base}&LH_Sold=1&LH_Complete=1` : base;
-}
-
-function fromHtml(html: string, sold: boolean): Listing[] {
-  const $ = cheerio.load(html);
-  const out: Listing[] = [];
-  $("li.s-item, li.s-card").each((_, li) => {
-    const a = $(li).find("a[href*='/itm/']").first();
-    const id = a.attr("href")?.match(/\/itm\/(\d+)/)?.[1]; if (!id) return;
-    const t = (s: string) => $(li).find(s).first().text().trim() || null;
-    out.push({ marketplace: "ebay", id, title: t(".s-item__title, .s-card__title") ?? "", price_usd: money(t(".s-item__price, .s-card__price")), condition: t(".SECONDARY_INFO, .s-card__subtitle"), url: `https://www.ebay.com/itm/${id}`, image: $(li).find("img").first().attr("src") ?? null, shipping_usd: money(t(".s-item__shipping, .s-card__shipping, [class*='shipping']")), sold });
-  });
-  return out;
 }
 
 function fromMarkdown(md: string, links: string[], sold: boolean, images: string[] = []): Listing[] {
@@ -48,15 +35,19 @@ export const ebay: Adapter = {
   via: "TinyFish server-side render of ebay.com/sch (cached up to a few minutes); Browse API when creds are set",
   async search(query: string, opts: SearchOptions = {}) {
     const limit = opts.limit ?? 20; const sold = !!opts.sold;
-    const url = searchUrl(query, sold);
-    const html = await tinyfishFetch([url], { format: "html", purpose: "read product listings for price comparison" });
-    let rows = html.results[0] ? fromHtml(html.results[0].text, sold) : [];
-    if (rows.length === 0) {
+    // lowercase + collapsed whitespace so equivalent queries share TinyFish's cache (a cached render is what gets past eBay's bot check)
+    const url = searchUrl(query.toLowerCase().replace(/\s+/g, " ").trim(), sold);
+    let rows: Listing[] = []; let lastErr = "";
+    for (let attempt = 0; attempt < 3 && rows.length === 0; attempt++) {
+      if (attempt) await new Promise((r) => setTimeout(r, 2500 * attempt));
       const md = await tinyfishFetch([url], { format: "markdown", links: true, images: true, purpose: "read product listings for price comparison" });
-      if (md.errors.length) throw new Error(`ebay via tinyfish: ${md.errors.map((e) => e.error).join(",")}`);
-      rows = fromMarkdown(md.results[0].text, md.results[0].links ?? [], sold, (md.results[0] as any).image_links ?? []);
-      (ebay as any).lastPath = "markdown";
-    } else (ebay as any).lastPath = "html";
+      if (md.errors.length) { lastErr = md.errors.map((e) => e.error).join(","); continue; }
+      const text = md.results[0]?.text ?? "";
+      if (/Checking your browser|Something went wrong on our end|Pardon Our Interruption/i.test(text)) { lastErr = "ebay bot wall / error page"; continue; }
+      rows = fromMarkdown(text, md.results[0].links ?? [], sold, (md.results[0] as any).image_links ?? []);
+      (ebay as any).lastPath = `markdown (attempt ${attempt + 1})`;
+    }
+    if (rows.length === 0 && lastErr) throw new Error(`ebay via tinyfish: ${lastErr}`);
     return rows.filter((r) => r.title && !/Shop on eBay/i.test(r.title)).slice(0, limit);
   },
 };
