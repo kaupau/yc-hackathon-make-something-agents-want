@@ -78,7 +78,7 @@ export function makeGenericAdapter(cfg: GenericConfig): Adapter {
         if (r.errors.length) { lastErr = r.errors[0].error; continue; }
         rows = parseListings(r.results[0].text, r.results[0].links ?? [], cfg.item_prefix, cfg.name, !!opts.sold);
         const itemLinks = (r.results[0].links ?? []).filter((l) => l.includes(cfg.item_prefix)).length;
-        if (rows.length > 0 || itemLinks === 0 && r.results[0].text.length > 3000) break; // real results, or a genuinely empty page
+        if (rows.length > 0 || itemLinks === 0) break; // real results, or a genuinely empty result set; retry only when links came back without their card text
       }
       if (rows.length === 0 && lastErr) throw new Error(`${cfg.name}: ${lastErr}`);
       return rows.slice(0, opts.limit ?? 20);
