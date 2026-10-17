@@ -38,12 +38,14 @@ export class DurableCatalog implements Catalog {
 export class QuotaExceededError extends Error { readonly code = "QUOTA_EXCEEDED"; constructor(message = "Trial or vendor quota exhausted") { super(message); this.name = "QuotaExceededError"; } }
 
 export class DurableLedger implements Ledger {
-  constructor(private db: DemoDatabase, private now: () => number) {}
+  constructor(private db: DemoDatabase, private now: () => number, private maxActive = Infinity) {}
   async createTrial(trial: Trial): Promise<void> {
     this.db.transaction(() => {
       const listing = this.db.get<Listing>("listing", trial.listing_id);
       if (!listing?.trial || !Number.isSafeInteger(trial.limit) || trial.limit <= 0 || trial.limit > listing.trial.per_agent || trial.used !== 0 || !trial.token || !Number.isFinite(Date.parse(trial.expires_at)) || Date.parse(trial.expires_at) <= this.now()) throw new Error("Invalid trial or policy");
       if (this.db.list<Trial>("trial").some(t => t.token === trial.token)) throw new Error("Duplicate trial token");
+      const allActive = this.db.list<Trial>("trial").filter(t => ["active", "provisioning"].includes(t.status) && Date.parse(t.expires_at) > this.now());
+      if (allActive.length >= this.maxActive) throw new Error("Global sandbox limit reached");
       const active = this.db.list<Trial>("trial").filter(t => t.listing_id === trial.listing_id && ["active", "provisioning"].includes(t.status) && Date.parse(t.expires_at) > this.now());
       if (active.length >= listing.trial.max_concurrent) throw new Error("Vendor concurrent trial limit reached");
       // The allowance applies to the whole agent session, including ended trials.

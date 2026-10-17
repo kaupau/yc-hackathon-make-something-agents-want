@@ -88,3 +88,15 @@ docker run --rm -p 127.0.0.1:8787:8787 \
 ```
 
 The CLI-backed payment mode is local-development only; the production image does not bundle the Stripe CLI. Secrets are excluded from Git and Docker build contexts. Preserve the private `.env` and `.insforge` configuration on this machine; never copy them into a public artifact.
+
+## Railway + real Blaxel trials
+
+Hosted development URL: https://bodega-production-4802.up.railway.app . Project: https://railway.com/project/0a56f39d-e99f-4510-9138-c698b066a3b4 . The service uses one replica in us-west with a Railway-managed volume at `/app/.bodega`.
+
+`BODEGA_RUNTIME=blaxel` runs real code in the configured `nousdata` workspace. The deployed public HTTPS URL is injected into sandbox proxy settings, so sandboxes can reach Bodega for scoped provider access. `BODEGA_MAX_TRIAL_MINUTES=5` and `BODEGA_MAX_ACTIVE_TRIALS=3` bound resource use across listings. Provider credentials stay on Railway; sandboxes receive only expiring Bodega trial credentials. A completed comparison revokes and deletes its trial. The TTL also bounds abandoned trials.
+
+Railway MCP access requires its private `BODEGA_AGENT_TOKEN`. The local `.bodega/railway-mcp.json` contains a ready-to-use authenticated client configuration; it is intentionally excluded from Git. The homepage and public catalog are readable without that token. Administrator approval access uses a different private token. Railway service variables contain the Blaxel key and InsForge project key; the personal InsForge user key is not uploaded.
+
+Cloud payments are currently `mock`, clearly labeled by the app. The verified Stripe CLI fallback remains local to this Mac. To enable sandbox payments on Railway, configure a server-only Stripe test key for the same Bodega sandbox and change `BODEGA_PAYMENTS=stripe`. This is independent of real Blaxel trial execution. Primitive and Inkbox still require their provider credentials; PostPigeon remains a simulated provider even when its tests run in a real Blaxel sandbox.
+
+Railway mounts volumes as root. The container entrypoint prepares the private volume directory and then drops to the Node user before starting the app. Healthcheck host access is allowed only for `GET /health`. Deployment uploads are built from an explicit source-file allowlist so local `.env`, `.bodega`, transcripts, credentials and CLI configuration are not included in the upload.

@@ -1,4 +1,5 @@
 import test from "node:test";
+import { get as httpGet } from "node:http";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -292,6 +293,79 @@ test("HTTP webhooks retry unavailable verification, reconcile lost receipts, and
       (await a.services.ledger.funnel("postpigeon")).listings[0].purchases,
       1,
     );
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    await a.close();
+  }
+});
+
+test("cloud trial settings bound sandbox TTL and enforce a global cross-listing limit", async () => {
+  const created: Array<{ ttlSeconds: number }> = [];
+  const backend = {
+    mode: "blaxel" as const,
+    create: async (input: { id: string; ttlSeconds: number }) => {
+      created.push(input);
+      return input.id;
+    },
+    exec: async () => ({ exitCode: 0, stdout: "ok", stderr: "" }),
+    destroy: async () => {},
+  };
+  const app = await createApplication({
+    env: { BODEGA_MAX_ACTIVE_TRIALS: "1", BODEGA_MAX_TRIAL_MINUTES: "5" },
+    dbPath: ":memory:",
+    walletPath: ":memory:",
+    backend,
+  });
+  try {
+    const first = await app.runtime.start(
+      (await app.services.catalog.get("postpigeon-email"))!,
+      "cloud-trial-test",
+    );
+    assert.equal(created[0].ttlSeconds, 300);
+    assert.equal(
+      Date.parse(first.expires_at) - Date.parse(first.started_at),
+      300000,
+    );
+    await assert.rejects(
+      app.runtime.start(
+        (await app.services.catalog.get("primitive-email"))!,
+        "cloud-trial-test",
+      ),
+      /Global sandbox limit/,
+    );
+    assert.equal(created.length, 1);
+    await app.runtime.end(first.id);
+    await app.runtime.start(
+      (await app.services.catalog.get("primitive-email"))!,
+      "cloud-trial-test",
+    );
+    assert.equal(created.length, 2);
+  } finally {
+    await app.close();
+  }
+});
+
+test("Railway healthcheck host is allowed only on GET /health", async () => {
+  const a = await fixture();
+  const server = a.app.listen(0, "127.0.0.1");
+  await new Promise<void>((r) => server.once("listening", r));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const probe = (path: string, host: string) =>
+    new Promise<number>((resolve, reject) => {
+      const request = httpGet(
+        new URL(path, base),
+        { headers: { host } },
+        (response) => {
+          response.resume();
+          response.on("end", () => resolve(response.statusCode!));
+        },
+      );
+      request.on("error", reject);
+    });
+  try {
+    assert.equal(await probe("/health", "healthcheck.railway.app"), 200);
+    assert.equal(await probe("/portal", "healthcheck.railway.app"), 403);
+    assert.equal(await probe("/health", "attacker.example"), 403);
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
     await a.close();

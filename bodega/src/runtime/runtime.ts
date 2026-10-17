@@ -7,7 +7,7 @@ import { emailRoundtripScript, type EmailCheckOptions } from './checks.js';
 export type RuntimeServices = Pick<Services, 'catalog' | 'ledger' | 'vault'>;
 export interface RuntimeOptions {
   backend?: SandboxBackend; publicBaseUrl?: string; maxOutputBytes?: number; maxRunTimeoutMs?: number;
-  reaperIntervalMs?: number; now?: () => number; email?: EmailCheckOptions;
+  maxTrialMinutes?: number; reaperIntervalMs?: number; now?: () => number; email?: EmailCheckOptions;
 }
 const shellQuote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
 const trim = (text: string, max: number) => Buffer.from(text).subarray(0, max).toString('utf8');
@@ -47,17 +47,19 @@ export class ManagedTrialRuntime implements TrialRuntime {
     if (trials.some(t => t.listing_id === listing.id && t.sandbox_id)) throw new Error('This session already received its trial; ending a trial does not reset its allotment');
     const active = (await Promise.all([...this.owned].map(id => this.services.ledger.getTrial(id)))).filter(t => t && t.listing_id === listing.id && ['active', 'provisioning'].includes(t.status) && Date.parse(t.expires_at) > this.now());
     if (active.length >= listing.trial.max_concurrent) throw new Error('Concurrent trial limit reached');
+    const minutes = Math.min(listing.trial.expires_after_min, this.options.maxTrialMinutes ?? listing.trial.expires_after_min);
+    if (!Number.isFinite(minutes) || minutes <= 0) throw new Error('Invalid maximum trial duration');
     const id = `trial-${randomUUID()}`;
     const base = this.options.publicBaseUrl ?? process.env.BODEGA_PUBLIC_URL;
     if (!base) throw new Error('BODEGA_PUBLIC_URL or publicBaseUrl is required for sandbox proxy access');
     const proxy = new URL(base);
     if (!['http:', 'https:'].includes(proxy.protocol) || proxy.username || proxy.password) throw new Error('Invalid public proxy URL');
-    const trial: Trial = { id, listing_id: listing.id, session_id, sandbox_id: null, status: 'provisioning', used: 0, limit: listing.trial.per_agent, unit: listing.trial.unit, token: `bdg_trial_${randomBytes(24).toString('base64url')}`, started_at: new Date(this.now()).toISOString(), expires_at: new Date(this.now() + listing.trial.expires_after_min * 60000).toISOString() };
+    const trial: Trial = { id, listing_id: listing.id, session_id, sandbox_id: null, status: 'provisioning', used: 0, limit: listing.trial.per_agent, unit: listing.trial.unit, token: `bdg_trial_${randomBytes(24).toString('base64url')}`, started_at: new Date(this.now()).toISOString(), expires_at: new Date(this.now() + minutes * 60000).toISOString() };
     await this.services.ledger.createTrial(trial);
     this.owned.add(id);
     try {
       // No upstream credential is ever requested here or sent to the sandbox.
-      const sandboxId = await this.backend.create({ id: `bodega-${randomUUID()}`, image: listing.sandbox.image, ttlSeconds: Math.ceil(listing.trial.expires_after_min * 60), env: { BODEGA_TOOL_BASE_URL: `${proxy.origin}/proxy/${trial.token}`, BODEGA_TOOL_KEY: trial.token } });
+      const sandboxId = await this.backend.create({ id: `bodega-${randomUUID()}`, image: listing.sandbox.image, ttlSeconds: Math.ceil(minutes * 60), env: { BODEGA_TOOL_BASE_URL: `${proxy.origin}/proxy/${trial.token}`, BODEGA_TOOL_KEY: trial.token } });
       await this.services.ledger.updateTrial(id, { sandbox_id: sandboxId });
       for (const command of listing.sandbox.install) {
         const result = await this.backend.exec(sandboxId, { command, timeoutMs: 30000 });

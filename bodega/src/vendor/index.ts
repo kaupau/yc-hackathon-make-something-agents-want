@@ -34,7 +34,9 @@ export function createVendorServices(options: VendorServicesOptions = {}) {
   if (!Number.isFinite(ttl) || ttl <= 0) throw new Error("Invalid approval TTL");
   const db = new DemoDatabase(options.dbPath ?? env.BODEGA_VENDOR_DB_PATH ?? resolve(".bodega/vendor-demo.sqlite"));
   const catalog = new DurableCatalog(db, publicUrl);
-  const ledger = new DurableLedger(db, now);
+  const maxActive = env.BODEGA_MAX_ACTIVE_TRIALS ? Number(env.BODEGA_MAX_ACTIVE_TRIALS) : Infinity;
+  if (maxActive !== Infinity && (!Number.isSafeInteger(maxActive) || maxActive < 1)) throw new Error("Invalid global trial limit");
+  const ledger = new DurableLedger(db, now, maxActive);
   const vault = new SecureVault(db, now, publicUrl, env, options.upstreams, options.fetcher);
   const approvals = new SecureApprovals(db, publicUrl, now, ttl, options.deliverApproval);
   const adminToken = options.adminToken ?? env.BODEGA_VENDOR_ADMIN_TOKEN;

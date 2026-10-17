@@ -42,14 +42,19 @@ export interface ApplicationOptions {
   backend?: SandboxBackend;
   env?: NodeJS.ProcessEnv;
 }
-const same = (a: string, b: string) =>
-  a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const same = (a: string, b: string) => {
+  const left = Buffer.from(a),
+    right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+};
 export async function createApplication(options: ApplicationOptions = {}) {
   const env = options.env ?? process.env;
   const publicUrl = (
     options.publicUrl ??
     env.BODEGA_PUBLIC_URL ??
-    "http://127.0.0.1:8787"
+    (env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${env.RAILWAY_PUBLIC_DOMAIN}`
+      : "http://127.0.0.1:8787")
   ).replace(/\/$/, "");
   const origin = new URL(publicUrl).origin;
   const adminToken = options.adminToken ?? env.BODEGA_VENDOR_ADMIN_TOKEN;
@@ -65,6 +70,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
       ? await connectInsforge(vendor, {
           url: env.INSFORGE_URL,
           apiKey: env.INSFORGE_API_KEY,
+          publicUrl,
           outboxPath:
             env.BODEGA_SYNC_DB_PATH ?? ".bodega/insforge-outbox.sqlite",
         })
@@ -89,6 +95,9 @@ export async function createApplication(options: ApplicationOptions = {}) {
           })
         : createMockPayments());
   const runtime = createTrialRuntime(vendor, {
+    maxTrialMinutes: env.BODEGA_MAX_TRIAL_MINUTES
+      ? Number(env.BODEGA_MAX_TRIAL_MINUTES)
+      : undefined,
     publicBaseUrl: publicUrl,
     backend:
       options.backend ??
@@ -144,13 +153,18 @@ export async function createApplication(options: ApplicationOptions = {}) {
       "referrer-policy": "no-referrer",
     });
     const host = req.headers.host;
+    const railwayHealthcheck =
+      host === "healthcheck.railway.app" &&
+      req.method === "GET" &&
+      req.path === "/health";
     if (
       !host ||
-      ![
-        new URL(publicUrl).host,
-        "127.0.0.1:" + req.socket.localPort,
-        "localhost:" + req.socket.localPort,
-      ].includes(host)
+      (!railwayHealthcheck &&
+        ![
+          new URL(publicUrl).host,
+          "127.0.0.1:" + req.socket.localPort,
+          "localhost:" + req.socket.localPort,
+        ].includes(host))
     ) {
       res.status(403).json({ error: "Invalid host" });
       return;
@@ -180,24 +194,20 @@ export async function createApplication(options: ApplicationOptions = {}) {
       "content-security-policy",
       `default-src 'none'; style-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'`,
     );
-    res
-      .type("html")
-      .send(
-        homepage(
-          await services.catalog.search("", { limit: 100 }),
-          {
-            runtime: runtime.backend.mode,
-            payments:
-              payments.mode === "mock"
-                ? "simulated"
-                : "Stripe sandbox test card",
-            backend: remote
-              ? "InsForge catalog + audit; local admission"
-              : "local SQLite",
-          },
-          nonce,
-        ),
-      );
+    res.type("html").send(
+      homepage(
+        await services.catalog.search("", { limit: 100 }),
+        {
+          runtime: runtime.backend.mode,
+          payments:
+            payments.mode === "mock" ? "simulated" : "Stripe sandbox test card",
+          backend: remote
+            ? "InsForge catalog + audit; local admission"
+            : "local SQLite",
+        },
+        nonce,
+      ),
+    );
   });
   app.get("/llms.txt", (_req, res) =>
     res

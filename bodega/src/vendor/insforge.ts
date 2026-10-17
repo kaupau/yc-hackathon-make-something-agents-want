@@ -11,7 +11,12 @@ import { publicListing } from "./data.js";
  */
 export async function connectInsforge(
   services: { catalog: Catalog; ledger: Ledger },
-  options: { url: string; apiKey: string; outboxPath: string },
+  options: {
+    url: string;
+    apiKey: string;
+    outboxPath: string;
+    publicUrl?: string;
+  },
 ) {
   const client = createAdminClient({
     baseUrl: options.url,
@@ -84,7 +89,16 @@ export async function connectInsforge(
     );
   }
   for (const row of data ?? [])
-    await localCatalog.upsert(publicListing(row.listing as Listing));
+    await localCatalog.upsert(
+      publicListing(
+        row.id === "postpigeon-email" && options.publicUrl
+          ? {
+              ...(row.listing as Listing),
+              docs_url: `${options.publicUrl}/postpigeon/docs`,
+            }
+          : (row.listing as Listing),
+      ),
+    );
   for (const listing of await localCatalog.search("", { limit: 100 }))
     queue("listing", listing.id, listing);
   const originalUpsert = localCatalog.upsert.bind(localCatalog);
