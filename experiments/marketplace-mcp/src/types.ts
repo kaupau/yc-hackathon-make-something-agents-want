@@ -41,7 +41,7 @@ export interface Adapter {
   /** how this adapter reaches the site; surfaced to the agent so it knows the freshness/trust of the data */
   via: string;
   search(query: string, opts?: SearchOptions): Promise<Listing[]>;
-  item?(id: string): Promise<{ listing: Listing; description?: string | null; reviews?: Review[] }>;
+  item?(id: string): Promise<{ listing: Listing; description?: string | null; reviews?: Review[]; photos?: string[] }>;
 }
 
 export const money = (s: string | null | undefined): number | null => {

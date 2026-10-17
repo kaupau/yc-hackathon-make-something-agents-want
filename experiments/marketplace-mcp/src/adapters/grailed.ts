@@ -83,7 +83,7 @@ export const grailed: Adapter = {
       const listing: Listing = { marketplace: "grailed", id, title: d.title, price_usd: d.sold ? d.sold_price ?? d.price : d.price, condition: CONDITION[d.condition] ?? d.condition ?? null, url: `https://www.grailed.com/listings/${id}`, image: d.photos?.[0] ?? null, size: d.size ?? null, brand: d.designers?.[0] ?? null, sold: !!d.sold, location: d.location ?? null, seller: d.seller?.username ?? null, posted_at: d.created_at ?? null, rating: d.seller?.seller_score?.rating_average ?? null, review_count: d.seller?.seller_score?.rating_count ?? null };
       const list: any[] = ratings?.data ?? ratings?.seller_ratings ?? (Array.isArray(ratings) ? ratings : []);
       const reviews: Review[] = list.slice(0, 8).map((r: any) => ({ rating: r.rating ?? r.score ?? null, body: r.body ?? r.comment ?? r.text ?? "", author: r.rater?.username ?? r.user?.username ?? null, date: r.created_at ?? null }));
-      return { listing, description: d.description ?? null, reviews };
+      return { listing, description: d.description ?? null, reviews, photos: (d.photos ?? []).filter(Boolean) };
     } finally { await page.close(); }
   },
   async search(query: string, opts: SearchOptions = {}) {

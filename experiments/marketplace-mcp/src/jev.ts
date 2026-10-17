@@ -1,4 +1,4 @@
-import { image, noul, TypeSafeClient, withAssets } from "@typesafe-ai/sdk";
+import { choice, image, noul, TypeSafeClient, withAssets } from "@typesafe-ai/sdk";
 import sharp from "sharp";
 import type { Listing } from "./types.js";
 
@@ -77,12 +77,16 @@ export async function samePhoto(a: Listing, b: Listing): Promise<number | null> 
 }
 export let lastPhotoError: string | undefined;
 
-/** P(the listing text signals a catch: damage, defects, missing parts, "read description", replica, not the full product). */
-export async function catchRisk(l: Listing): Promise<number> {
-  if (!jevAvailable()) return 0;
+export type CatchReason = "read_description" | "damage_or_wear" | "parts_or_incomplete" | "replica_or_authenticity" | "size_or_variant" | "none";
+/** P(the listing text signals a catch) plus the most likely kind of catch, in one request. */
+export async function catchRisk(l: Listing): Promise<{ risk: number; reason: CatchReason }> {
+  if (!jevAvailable()) return { risk: 0, reason: "none" };
   const { answers } = await jev().systemOne({
     state: { listing: slim(l) },
-    questions: { risk: noul("Does `listing` signal a catch for a buyer: damage, defects, stains, missing parts, 'read description', replica/fake, parts only, or that it is not the complete product?", { true: "A warning sign is present in the title or condition", false: "Nothing in the text suggests a problem" }) },
+    questions: {
+      risk: noul("Does `listing` signal a catch for a buyer: damage, defects, stains, missing parts, 'read description', replica/fake, parts only, or that it is not the complete product?", { true: "A warning sign is present in the title or condition", false: "Nothing in the text suggests a problem" }),
+      reason: choice("What is the most likely catch in `listing`, if any?", { read_description: "Title asks to read the description or says 'as is'", damage_or_wear: "Damage, defects, stains, heavy wear, repairs needed", parts_or_incomplete: "Parts only, missing pieces, box or accessories only", replica_or_authenticity: "Replica, unbranded, 'style', or authenticity in doubt", size_or_variant: "Kids, youth, mini or a different variant than the query", none: "Nothing suggests a catch" }),
+    },
   });
-  return answers.risk.noul;
+  return { risk: answers.risk.noul, reason: answers.reason.choice as CatchReason };
 }

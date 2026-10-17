@@ -1,11 +1,11 @@
 import { adapters } from "./adapters/index.js";
 import { ebay } from "./adapters/ebay.js";
-import { catchRisk, relevance, samePhoto } from "./jev.js";
+import { catchRisk, relevance, samePhoto, type CatchReason } from "./jev.js";
 import type { Listing } from "./types.js";
 
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null; };
 
-export interface Opportunity { listing: Listing; reference_usd: number; reference_from: string; spread_usd: number; spread_pct: number; relevance: number; counterpart?: { marketplace: string; url: string; price_usd: number | null }; photo_match?: number | null; catch_risk?: number }
+export interface Opportunity { listing: Listing; reference_usd: number; reference_from: string; spread_usd: number; spread_pct: number; relevance: number; counterpart?: { marketplace: string; url: string; price_usd: number | null }; photo_match?: number | null; catch_risk?: number; catch_reason?: CatchReason }
 
 /**
  * Cross-marketplace price gaps for one product query.
@@ -43,7 +43,7 @@ export async function arbitrage(query: string, opts: { limit?: number; min_sprea
     const cp = kept.map((x) => x.l).filter((l) => l.marketplace !== o.listing.marketplace && l.image && l.price_usd !== null).sort((a, b) => a.price_usd! - b.price_usd!)[0];
     const [pm, cr] = await Promise.all([cp ? samePhoto(o.listing, cp) : Promise.resolve(null), catchRisk(o.listing)]);
     if (cp) o.counterpart = { marketplace: cp.marketplace, url: cp.url, price_usd: cp.price_usd };
-    o.photo_match = pm === null ? null : Math.round(pm * 100) / 100; o.catch_risk = Math.round(cr * 100) / 100;
+    o.photo_match = pm === null ? null : Math.round(pm * 100) / 100; o.catch_risk = Math.round(cr.risk * 100) / 100; o.catch_reason = cr.reason;
   }));
-  return { query, reference: { sold_comps: soldPrices.length, sold_median_usd: soldMedian }, by_marketplace: byMarket, considered: listings.length, kept_after_relevance: kept.length, opportunities: top, errors };
+  return { query, reference: { sold_comps: soldPrices.length, sold_median_usd: soldMedian }, by_marketplace: byMarket, considered: listings.length, kept_after_relevance: kept.length, opportunities: top, errors, sources: kept.map(({ l, r }) => ({ ...l, relevance: Math.round(r * 100) / 100 })).sort((a, b) => a.marketplace.localeCompare(b.marketplace) || (a.price_usd ?? 0) - (b.price_usd ?? 0)) };
 }

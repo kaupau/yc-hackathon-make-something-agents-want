@@ -15,7 +15,7 @@ const arbitrageOutput = z.object({
   reference: z.object({ sold_comps: z.number(), sold_median_usd: z.number().nullable() }),
   by_marketplace: z.record(z.string(), z.object({ n: z.number(), min: z.number().nullable(), median: z.number().nullable() })),
   considered: z.number(), kept_after_relevance: z.number(),
-  opportunities: z.array(z.object({ listing: compactSchema, reference_usd: z.number(), reference_from: z.string(), spread_usd: z.number(), spread_pct: z.number(), relevance: z.number(), counterpart: z.object({ marketplace: z.string(), url: z.string(), price_usd: z.number().nullable() }).optional(), photo_match: z.number().nullable().optional(), catch_risk: z.number().optional() })),
+  opportunities: z.array(z.object({ listing: compactSchema, reference_usd: z.number(), reference_from: z.string(), spread_usd: z.number(), spread_pct: z.number(), relevance: z.number(), counterpart: z.object({ marketplace: z.string(), url: z.string(), price_usd: z.number().nullable() }).optional(), photo_match: z.number().nullable().optional(), catch_risk: z.number().optional(), catch_reason: z.string().optional() })),
   errors: z.array(z.string()),
 });
 const text = (o: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(o) }], structuredContent: o as any });
@@ -41,16 +41,19 @@ server.tool({
   return text({ query, results: out });
 });
 
-server.tool({
+export const itemTool = server.tool({
   name: "item",
-  description: "Details for one listing: full title, price, rating and top reviews where the marketplace exposes them (Amazon today). Use the marketplace and id from search().",
+  description: "Details for one listing: title, price, condition, photos, description, seller and reviews where the marketplace exposes them (eBay, Grailed, Amazon). Use the marketplace and id from search() or arbitrage().",
   inputSchema: z.object({ marketplace: z.string(), id: z.string() }),
+  outputSchema: z.object({ error: z.string().optional(), listing: compactSchema.optional(), description: z.string().nullable().optional(), photos: z.array(z.string()).optional(), reviews: z.array(z.object({ rating: z.number().nullable(), title: z.string().nullable().optional(), body: z.string(), date: z.string().nullable().optional() })).optional() }),
   annotations: { readOnlyHint: true, openWorldHint: true },
 }, async ({ marketplace, id }) => {
   const a = adapters[marketplace]; if (!a) return text({ error: `unknown marketplace ${marketplace}` });
-  if (!a.item) return text({ error: `${marketplace} has no item details yet; open the URL`, url: marketplace === "ebay" ? `https://www.ebay.com/itm/${id}` : `https://www.grailed.com/listings/${id}` });
-  const d = await a.item(id);
-  return text({ listing: compact(d.listing), description: d.description ?? null, reviews: (d.reviews ?? []).slice(0, 6).map((r) => ({ rating: r.rating, title: r.title, body: r.body.slice(0, 300), date: r.date })) });
+  if (!a.item) return text({ error: `${marketplace} has no item details yet; open the listing URL` });
+  try {
+    const d = await a.item(id);
+    return text({ listing: compact(d.listing), description: d.description ?? null, photos: d.photos ?? (d.listing.image ? [d.listing.image] : []), reviews: (d.reviews ?? []).slice(0, 6).map((r) => ({ rating: r.rating, title: r.title, body: r.body.slice(0, 300), date: r.date })) });
+  } catch (e: any) { return text({ error: e.message.split("\n")[0] }); }
 });
 
 export const arbitrageTool = server.tool({
@@ -58,14 +61,15 @@ export const arbitrageTool = server.tool({
   description: "Find a product listed well below what it sells for elsewhere. Searches every marketplace, uses eBay SOLD comps as the reference price when eBay serves them (else the median live ask on the other marketplaces, stated in reference_from), drops listings that are not the product itself (Jev judgment), and returns the biggest spreads with evidence. Slow: 15-40 s.",
   inputSchema: z.object({ query: z.string().min(2), limit: z.number().int().min(1).max(10).default(5), min_spread_pct: z.number().min(0).max(0.9).default(0.25) }),
   outputSchema: arbitrageOutput,
-  view: { name: "arbitrage-board", description: "Cross-marketplace spreads with photo, relevance and catch-risk evidence", prefersBorder: false, csp: { resourceDomains: ["https://i.ebayimg.com", "https://m.media-amazon.com", "https://media-assets.grailed.com", "https://fonts.googleapis.com", "https://fonts.gstatic.com"] } },
+  view: { name: "arbitrage-board", description: "Cross-marketplace spreads with photo, relevance and catch-risk evidence", prefersBorder: false, csp: { resourceDomains: ["https://i.ebayimg.com", "https://m.media-amazon.com", "https://media-assets.grailed.com"] } },
   annotations: { readOnlyHint: true, openWorldHint: true },
 }, async ({ query, limit, min_spread_pct }) => {
   const r = await arbitrage(query, { limit, min_spread_pct });
-  const out = { ...r, opportunities: r.opportunities.map((o) => ({ ...o, listing: compact(o.listing) })) };
+  const { sources, ...rest } = r;
+  const out = { ...rest, opportunities: r.opportunities.map((o) => ({ ...o, listing: compact(o.listing) })) };
   const top = out.opportunities[0];
   const summary = top ? `${out.opportunities.length} opportunities for "${query}"; best: ${top.listing.m} $${top.listing.usd} vs $${top.reference_usd} (${Math.round(top.spread_pct * 100)}% below, catch_risk ${top.catch_risk ?? "n/a"}, photo_match ${top.photo_match ?? "n/a"}). ${out.considered} listings across ${Object.keys(out.by_marketplace).length} marketplaces, ${out.kept_after_relevance} judged relevant.` : `No listing for "${query}" is ${Math.round(min_spread_pct * 100)}% below its reference; ${out.considered} listings seen.`;
-  return { content: [{ type: "text" as const, text: summary + " " + JSON.stringify(out.opportunities.map((o) => ({ m: o.listing.m, usd: o.listing.usd, spread: o.spread_usd, catch: o.catch_risk, url: o.listing.url }))) }], structuredContent: out as any };
+  return { content: [{ type: "text" as const, text: summary + " " + JSON.stringify(out.opportunities.map((o) => ({ m: o.listing.m, usd: o.listing.usd, spread: o.spread_usd, catch: o.catch_risk, why: o.catch_reason, url: o.listing.url }))) }], structuredContent: out as any, _meta: { sources: sources.map((l) => ({ ...compact(l), relevance: (l as any).relevance })) } };
 });
 
 server.tool({
