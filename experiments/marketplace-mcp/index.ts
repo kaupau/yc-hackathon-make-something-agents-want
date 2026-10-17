@@ -15,8 +15,9 @@ const arbitrageOutput = z.object({
   reference: z.object({ sold_comps: z.number(), sold_median_usd: z.number().nullable() }),
   by_marketplace: z.record(z.string(), z.object({ n: z.number(), min: z.number().nullable(), median: z.number().nullable() })),
   considered: z.number(), kept_after_relevance: z.number(),
-  opportunities: z.array(z.object({ listing: compactSchema, reference_usd: z.number(), reference_from: z.string(), spread_usd: z.number(), spread_pct: z.number(), relevance: z.number(), counterpart: z.object({ marketplace: z.string(), url: z.string(), price_usd: z.number().nullable() }).optional(), photo_match: z.number().nullable().optional(), catch_risk: z.number().optional(), catch_reason: z.string().optional() })),
+  opportunities: z.array(z.object({ listing: compactSchema, reference_usd: z.number(), reference_from: z.string(), spread_usd: z.number(), spread_pct: z.number(), relevance: z.number(), counterpart: z.object({ marketplace: z.string(), url: z.string(), price_usd: z.number().nullable() }).optional(), photo_match: z.number().nullable().optional(), catch_risk: z.number().optional(), catch_reason: z.string().optional(), replica_risk: z.number().optional(), suspected_replica: z.boolean().optional() })),
   errors: z.array(z.string()),
+  sources: z.array(compactSchema.extend({ relevance: z.number().optional() })).optional(),
 });
 const text = (o: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(o) }], structuredContent: o as any });
 
@@ -58,18 +59,22 @@ export const itemTool = server.tool({
 
 export const arbitrageTool = server.tool({
   name: "arbitrage",
-  description: "Find a product listed well below what it sells for elsewhere. Searches every marketplace, uses eBay SOLD comps as the reference price when eBay serves them (else the median live ask on the other marketplaces, stated in reference_from), drops listings that are not the product itself (Jev judgment), and returns the biggest spreads with evidence. Slow: 15-40 s.",
+  description: "Find a product listed well below what it sells for elsewhere. Searches every marketplace, uses eBay SOLD comps as the reference price when eBay serves them (else the median live ask on the other marketplaces, stated in reference_from), drops listings that are not the product itself, and returns the biggest spreads with evidence per listing: relevance, photo_match, catch_risk + catch_reason, and replica_risk. Listings marked suspected_replica are likely counterfeits: never recommend them, say why. Slow: 15-40 s.",
   inputSchema: z.object({ query: z.string().min(2), limit: z.number().int().min(1).max(10).default(5), min_spread_pct: z.number().min(0).max(0.9).default(0.25) }),
   outputSchema: arbitrageOutput,
   view: { name: "arbitrage-board", description: "Cross-marketplace spreads with photo, relevance and catch-risk evidence", prefersBorder: false, csp: { resourceDomains: ["https://i.ebayimg.com", "https://m.media-amazon.com", "https://media-assets.grailed.com"] } },
   annotations: { readOnlyHint: true, openWorldHint: true },
 }, async ({ query, limit, min_spread_pct }) => {
   const r = await arbitrage(query, { limit, min_spread_pct });
-  const { sources, ...rest } = r;
-  const out = { ...rest, opportunities: r.opportunities.map((o) => ({ ...o, listing: compact(o.listing) })) };
-  const top = out.opportunities[0];
-  const summary = top ? `${out.opportunities.length} opportunities for "${query}"; best: ${top.listing.m} $${top.listing.usd} vs $${top.reference_usd} (${Math.round(top.spread_pct * 100)}% below, catch_risk ${top.catch_risk ?? "n/a"}, photo_match ${top.photo_match ?? "n/a"}). ${out.considered} listings across ${Object.keys(out.by_marketplace).length} marketplaces, ${out.kept_after_relevance} judged relevant.` : `No listing for "${query}" is ${Math.round(min_spread_pct * 100)}% below its reference; ${out.considered} listings seen.`;
-  return { content: [{ type: "text" as const, text: summary + " " + JSON.stringify(out.opportunities.map((o) => ({ m: o.listing.m, usd: o.listing.usd, spread: o.spread_usd, catch: o.catch_risk, why: o.catch_reason, url: o.listing.url }))) }], structuredContent: out as any, _meta: { sources: sources.map((l) => ({ ...compact(l), relevance: (l as any).relevance })) } };
+  // sources ride in structuredContent (the View's data channel); _meta is reserved for host UI metadata and broke rendering
+  const out = { ...r, opportunities: r.opportunities.map((o) => ({ ...o, listing: compact(o.listing) })), sources: r.sources.slice(0, 120).map((l) => ({ ...compact(l), relevance: (l as any).relevance })) };
+  const reps = out.opportunities.filter((o) => o.suspected_replica);
+  const top = out.opportunities.find((o) => !o.suspected_replica) ?? out.opportunities[0];
+  const replicaNote = reps.length ? ` WARNING: ${reps.length} of the cheapest listings look like replicas or counterfeits (${reps.map((o) => `${o.listing.m} $${o.listing.usd}`).join(", ")}); do not recommend or buy those, say why, and prefer the genuine finds.` : "";
+  const summary = (top
+    ? `${out.opportunities.length} opportunities for "${query}"; best genuine-looking: ${top.listing.m} $${top.listing.usd} vs $${top.reference_usd} (${Math.round(top.spread_pct * 100)}% below, catch_risk ${top.catch_risk ?? "n/a"}, photo_match ${top.photo_match ?? "n/a"}, replica_risk ${top.replica_risk ?? "n/a"}). ${out.considered} listings across ${Object.keys(out.by_marketplace).length} marketplaces, ${out.kept_after_relevance} judged relevant.`
+    : `No listing for "${query}" is ${Math.round(min_spread_pct * 100)}% below its reference; ${out.considered} listings seen.`) + replicaNote;
+  return { content: [{ type: "text" as const, text: summary + " " + JSON.stringify(out.opportunities.map((o) => ({ m: o.listing.m, usd: o.listing.usd, spread: o.spread_usd, catch: o.catch_risk, why: o.catch_reason, replica: o.replica_risk, suspected_replica: o.suspected_replica || undefined, url: o.listing.url }))) }], structuredContent: out as any };
 });
 
 server.tool({

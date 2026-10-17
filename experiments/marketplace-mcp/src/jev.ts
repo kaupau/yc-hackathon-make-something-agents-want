@@ -78,15 +78,21 @@ export async function samePhoto(a: Listing, b: Listing): Promise<number | null> 
 export let lastPhotoError: string | undefined;
 
 export type CatchReason = "read_description" | "damage_or_wear" | "parts_or_incomplete" | "replica_or_authenticity" | "size_or_variant" | "none";
-/** P(the listing text signals a catch) plus the most likely kind of catch, in one request. */
-export async function catchRisk(l: Listing): Promise<{ risk: number; reason: CatchReason }> {
-  if (!jevAvailable()) return { risk: 0, reason: "none" };
+export interface CatchJudgment { risk: number; reason: CatchReason; replica: number }
+/**
+ * One request, three judgments: P(any catch), the most likely kind, and P(replica / unauthorized copy).
+ * The typical price is part of the state on purpose: a "Chrm Hrts" ring at 2% of the going rate is the tell.
+ */
+export async function catchRisk(l: Listing, typicalUsd?: number | null): Promise<CatchJudgment> {
+  if (!jevAvailable()) return { risk: 0, reason: "none", replica: 0 };
+  const state = { listing: slim(l), typical_price_usd: typicalUsd ?? null, price_vs_typical: typicalUsd && l.price_usd ? `${Math.round((l.price_usd / typicalUsd) * 100)}% of typical` : "unknown" };
   const { answers } = await jev().systemOne({
-    state: { listing: slim(l) },
+    state,
     questions: {
-      risk: noul("Does `listing` signal a catch for a buyer: damage, defects, stains, missing parts, 'read description', replica/fake, parts only, or that it is not the complete product?", { true: "A warning sign is present in the title or condition", false: "Nothing in the text suggests a problem" }),
-      reason: choice("What is the most likely catch in `listing`, if any?", { read_description: "Title asks to read the description or says 'as is'", damage_or_wear: "Damage, defects, stains, heavy wear, repairs needed", parts_or_incomplete: "Parts only, missing pieces, box or accessories only", replica_or_authenticity: "Replica, unbranded, 'style', or authenticity in doubt", size_or_variant: "Kids, youth, mini or a different variant than the query", none: "Nothing suggests a catch" }),
+      risk: noul("Does `listing` signal a catch for a buyer: damage, defects, stains, missing parts, 'read description', replica/fake, parts only, or that it is not the complete product?", { true: "A warning sign is present in the title, condition or price", false: "Nothing suggests a problem" }),
+      reason: choice("What is the most likely catch in `listing`, if any?", { read_description: "Title asks to read the description or says 'as is'", damage_or_wear: "Damage, defects, stains, heavy wear, repairs needed", parts_or_incomplete: "Parts only, missing pieces, box or accessories only", replica_or_authenticity: "Replica, unbranded, 'style', misspelled brand, or a price far below what the genuine item sells for", size_or_variant: "Kids, youth, mini or a different variant than the query", none: "Nothing suggests a catch" }),
+      replica: noul("Is `listing` likely a replica, counterfeit or unauthorized copy rather than the genuine branded product? Weigh the title wording (misspelled or abbreviated brand, 'style', 'inspired', 'unbranded'), the marketplace, and `price_vs_typical`.", { true: "Likely a replica or counterfeit", false: "Likely the genuine item" }),
     },
   });
-  return { risk: answers.risk.noul, reason: answers.reason.choice as CatchReason };
+  return { risk: answers.risk.noul, reason: answers.reason.choice as CatchReason, replica: answers.replica.noul };
 }

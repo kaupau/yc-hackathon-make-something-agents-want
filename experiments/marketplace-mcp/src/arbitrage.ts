@@ -5,7 +5,7 @@ import type { Listing } from "./types.js";
 
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null; };
 
-export interface Opportunity { listing: Listing; reference_usd: number; reference_from: string; spread_usd: number; spread_pct: number; relevance: number; counterpart?: { marketplace: string; url: string; price_usd: number | null }; photo_match?: number | null; catch_risk?: number; catch_reason?: CatchReason }
+export interface Opportunity { listing: Listing; reference_usd: number; reference_from: string; spread_usd: number; spread_pct: number; relevance: number; counterpart?: { marketplace: string; url: string; price_usd: number | null }; photo_match?: number | null; catch_risk?: number; catch_reason?: CatchReason; replica_risk?: number; suspected_replica?: boolean }
 
 /**
  * Cross-marketplace price gaps for one product query.
@@ -41,9 +41,11 @@ export async function arbitrage(query: string, opts: { limit?: number; min_sprea
   const top = opps.slice(0, opts.limit ?? 5);
   await Promise.all(top.map(async (o) => {
     const cp = kept.map((x) => x.l).filter((l) => l.marketplace !== o.listing.marketplace && l.image && l.price_usd !== null).sort((a, b) => a.price_usd! - b.price_usd!)[0];
-    const [pm, cr] = await Promise.all([cp ? samePhoto(o.listing, cp) : Promise.resolve(null), catchRisk(o.listing)]);
+    const [pm, cr] = await Promise.all([cp ? samePhoto(o.listing, cp) : Promise.resolve(null), catchRisk(o.listing, o.reference_usd)]);
     if (cp) o.counterpart = { marketplace: cp.marketplace, url: cp.url, price_usd: cp.price_usd };
-    o.photo_match = pm === null ? null : Math.round(pm * 100) / 100; o.catch_risk = Math.round(cr.risk * 100) / 100; o.catch_reason = cr.reason;
+    o.photo_match = pm === null ? null : Math.round(pm * 100) / 100; o.catch_risk = Math.round(cr.risk * 100) / 100; o.catch_reason = cr.reason; o.replica_risk = Math.round(cr.replica * 100) / 100; o.suspected_replica = cr.replica >= 0.5 || (cr.reason === "replica_or_authenticity" && cr.risk >= 0.3);
   }));
+  // suspected replicas sink below genuine finds so the first rows are the ones worth an agent's attention
+  top.sort((a, b) => Number(!!a.suspected_replica) - Number(!!b.suspected_replica) || b.spread_usd - a.spread_usd);
   return { query, reference: { sold_comps: soldPrices.length, sold_median_usd: soldMedian }, by_marketplace: byMarket, considered: listings.length, kept_after_relevance: kept.length, opportunities: top, errors, sources: kept.map(({ l, r }) => ({ ...l, relevance: Math.round(r * 100) / 100 })).sort((a, b) => a.marketplace.localeCompare(b.marketplace) || (a.price_usd ?? 0) - (b.price_usd ?? 0)) };
 }

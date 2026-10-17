@@ -15,6 +15,7 @@ const REASON: Record<string, string> = { read_description: "the title asks you t
 
 function verdict(o: any): { tone: "ok" | "warn" | "bad"; text: string } {
   const c = o.catch_risk ?? 0, p = o.photo_match, r = o.relevance ?? 1, why = REASON[o.catch_reason ?? "none"];
+  if (o.suspected_replica) return { tone: "bad", text: `Suspected replica (${pc(o.replica_risk)}%): priced at ${o.reference_usd ? Math.round(((o.listing.usd ?? 0) / o.reference_usd) * 100) : "?"}% of typical${o.catch_reason === "replica_or_authenticity" ? ", wording looks off" : ""}. Not recommended.` };
   if (c >= 0.6) return { tone: "bad", text: `Likely a catch: ${why}.` };
   if (r < 0.8) return { tone: "warn", text: "Check first: might not be the exact model." };
   if (p != null && p < 0.5) return { tone: "warn", text: `Check first: photos only ${pc(p)}% match the ${o.counterpart?.marketplace ?? "other"} listing.` };
@@ -59,8 +60,8 @@ export default function ArbitrageBoard() {
   const go = (url: string) => (e: React.MouseEvent) => { e.preventDefault(); void openExternal({ url }); };
   const expand = (s: { m: string; id: string }) => { const k = `${s.m}:${s.id}`; if (open === k) { setOpen(null); return; } setOpen(k); item.callTool({ marketplace: s.m, id: s.id }).catch(() => {}); };
 
-  const meta: any = (view as any).meta ?? {};
-  const sources: Src[] = useMemo(() => meta.sources ?? [], [meta.sources]);
+  const ready: any = view.status === "ready" ? view.toolOutput : null;
+  const sources: Src[] = useMemo(() => ready?.sources ?? [], [ready]);
 
   if (view.status === "error") return <ThemeProvider><section className="nb"><p className="nb-eyebrow">ARBITRAGE</p><p className="nb-err">{view.error.message}</p></section></ThemeProvider>;
   if (view.status === "pending") return <ThemeProvider><section className="nb"><p className="nb-eyebrow">ARBITRAGE <span className="nb-live">● SEARCHING</span></p><h1 className="nb-h1">{view.toolInput?.query ?? "…"}</h1><p className="nb-sub">Every marketplace, then relevance, photos and the catch check. 20–40 s.</p><div className="nb-skel" /><div className="nb-skel" /></section></ThemeProvider>;
