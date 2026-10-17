@@ -48,10 +48,14 @@ export class SecureApprovals implements Approvals {
 
 interface ScopedKey { trial_id: string; key_hash: string; expires_at: string; revoked: boolean }
 interface StoredLease extends Lease { listing_id: string; revoked: boolean }
+/** Server-side upstream configuration (never persisted, never sent to agents). The simulated PostPigeon vendor is served by this app. */
+export function vendorUpstreams(publicUrl: string, upstreams?: UpstreamConfig[]): Map<string, UpstreamConfig> {
+  return new Map((upstreams ?? UPSTREAMS.map(u => u.listing_id === "postpigeon-email" ? { ...u, base_url: `${publicUrl}/postpigeon`, credential: { kind: "provision_webhook" as const, url: `${publicUrl}/postpigeon/provision`, revoke_url: `${publicUrl}/postpigeon/revoke` } } : u)).map(u => [u.listing_id, structuredClone(u)]));
+}
 export class SecureVault implements Vault {
   private readonly upstreams: Map<string, UpstreamConfig>;
   constructor(private db: DemoDatabase, private now: () => number, publicUrl: string, private env: NodeJS.ProcessEnv, upstreams?: UpstreamConfig[], private fetcher: typeof fetch = fetch) {
-    this.upstreams = new Map((upstreams ?? UPSTREAMS.map(u => u.listing_id === "postpigeon-email" ? { ...u, base_url: `${publicUrl}/postpigeon`, credential: { kind: "provision_webhook" as const, url: `${publicUrl}/postpigeon/provision`, revoke_url: `${publicUrl}/postpigeon/revoke` } } : u)).map(u => [u.listing_id, structuredClone(u)]));
+    this.upstreams = vendorUpstreams(publicUrl, upstreams);
   }
   async upstream(listing_id: string): Promise<UpstreamConfig> { const u = this.upstreams.get(listing_id); if (!u) throw new Error("Upstream unavailable"); return structuredClone(u); }
   async lease(listing_id: string, trial_id: string): Promise<Lease> {
