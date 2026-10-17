@@ -12,7 +12,7 @@ export interface Opportunity {
   net_profit_usd: number; margin_pct: number;
   // kept for the board and older clients
   reference_usd: number; reference_from: string; spread_usd: number; spread_pct: number;
-  relevance: number; counterpart?: { marketplace: string; url: string; price_usd: number | null }; photo_match?: number | null; catch_risk?: number; catch_reason?: CatchReason; replica_risk?: number; suspected_replica?: boolean;
+  relevance: number; counterpart?: { marketplace: string; url: string; price_usd: number | null; sold?: boolean }; photo_match?: number | null; catch_risk?: number; catch_reason?: CatchReason; replica_risk?: number; suspected_replica?: boolean;
 }
 
 /**
@@ -65,7 +65,7 @@ export async function arbitrage(query: string, opts: { limit?: number; min_sprea
     const cp = comps.filter((c) => c.image && c.marketplace === o.comps_venue).sort((a, b) => Math.abs(a.price - o.sell_est_usd) - Math.abs(b.price - o.sell_est_usd))[0]
       ?? kept.map((x) => x.l).filter((l) => l.marketplace !== o.listing.marketplace && l.image && l.price_usd !== null).sort((a, b) => a.price_usd! - b.price_usd!)[0];
     const [pm, cr] = await Promise.all([cp ? samePhoto(o.listing, cp) : Promise.resolve(null), catchRisk(o.listing, o.sell_est_usd)]);
-    if (cp) o.counterpart = { marketplace: cp.marketplace, url: cp.url, price_usd: (cp as any).price ?? cp.price_usd };
+    if (cp) o.counterpart = { marketplace: cp.marketplace, url: cp.url, price_usd: (cp as any).price ?? cp.price_usd, sold: !!cp.sold };
     o.photo_match = pm === null ? null : r2(pm); o.catch_risk = r2(cr.risk); o.catch_reason = cr.reason; o.replica_risk = r2(cr.replica);
     o.suspected_replica = cr.replica >= 0.5 || (cr.reason === "replica_or_authenticity" && cr.risk >= 0.3);
   }));

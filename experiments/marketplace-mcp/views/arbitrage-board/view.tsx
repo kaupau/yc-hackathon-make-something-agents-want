@@ -19,8 +19,8 @@ function verdict(o: any): { tone: "ok" | "warn" | "bad"; text: string } {
   if (c >= 0.6) return { tone: "bad", text: `Likely a catch: ${why}.` };
   if (r < 0.8) return { tone: "warn", text: "Check first: might not be the exact model." };
   if (p != null && p < 0.5) return { tone: "warn", text: `Check first: photos only ${pc(p)}% match the ${o.counterpart?.marketplace ?? "other"} listing.` };
-  if (c >= 0.3) return { tone: "warn", text: `Check first: ${why}.` };
-  return { tone: "ok", text: p != null ? `Looks clean: photos match the ${o.counterpart?.marketplace ?? "other"} listing (${pc(p)}%).` : "Looks clean: nothing flagged in the listing." };
+  if (c >= 0.3 && (o.catch_reason ?? "none") !== "none") return { tone: "warn", text: `Check first: ${why}.` };
+  return { tone: "ok", text: p != null ? `Looks clean: photos match a ${o.counterpart?.marketplace ?? "comparable"} ${o.counterpart?.sold ? "sale" : "listing"} (${pc(p)}%).` : "Looks clean: nothing flagged in the listing." };
 }
 
 function PriceMap({ sources, refPrice }: { sources: Src[]; refPrice: number | null }) {
@@ -119,7 +119,7 @@ function Board() {
                     <p className="nb-profit"><span>sells for <b>{usd((o as any).sell_est_usd ?? o.reference_usd)}</b> on {(o as any).comps_venue ?? "resale"} ({(o as any).comps_n ?? 0} sold{(o as any).comps_tier && (o as any).comps_tier !== "any" ? `, ${String((o as any).comps_tier).replace("_", " ")}` : ""})</span><span>fees {pc((o as any).fee_pct ?? 0)}%</span><span className="net">net {usd((o as any).net_profit_usd)} · {pc((o as any).margin_pct)}% margin</span></p>
                     <a className="nb-title" href={l.url} onClick={go(l.url)}>{l.title}</a>
                     <p className={`nb-verdict ${v.tone}`}>{v.text}</p>
-                    <p className="nb-meta"><span className="nb-pill">{l.m}</span>{l.cond && <span>{l.cond}</span>}{l.size && <span>size {l.size}</span>}{l.ship != null && <span>+{usd(l.ship)} shipping</span>}{o.counterpart && <a href={o.counterpart.url} onClick={go(o.counterpart.url)}>photo compared with a {o.counterpart.marketplace} sale at {usd(o.counterpart.price_usd)}</a>}</p>
+                    <p className="nb-meta"><span className="nb-pill">{l.m}</span>{l.cond && <span>{l.cond}</span>}{l.size && <span>size {l.size}</span>}{l.ship != null && <span>+{usd(l.ship)} shipping</span>}{o.counterpart && <a href={o.counterpart.url} onClick={go(o.counterpart.url)}>photo compared with a {o.counterpart.marketplace} {(o.counterpart as any).sold ? "sale" : "listing"} at {usd(o.counterpart.price_usd)}</a>}</p>
                     <p className="nb-actions"><button onClick={() => expand(l)}>{open === `${l.m}:${l.id}` ? "Hide" : "Photos & details"}</button><a href={l.url} onClick={go(l.url)}>Open listing ↗</a></p>
                     {detail(l)}
                   </div>

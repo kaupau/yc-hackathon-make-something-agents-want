@@ -88,6 +88,17 @@ Seven product markets through `arbitrage()`, limit 5, min spread 20%, from the l
 
 Findings: (1) **eBay's bot wall hit 4 of 7 queries** through TinyFish (fresh query strings have no cached render); eBay is the best source when it answers and the least reliable. (2) Most big spreads are **used-vs-new or size/condition mismatches**, not true arbitrage; the catch check catches the "read description" and parts listings, but size (kids vs adult) and condition-matched references are the next filter to add. (3) Jev's relevance filter does real work (AirPods: 34 → 4, Seiko: 59 → 3). (4) Resale markets can be above retail (YETI), which is its own signal.
 
+## Flip model (18:40 PT): real arbitrage, not price gaps
+`arbitrage` now answers "can I buy this here and resell it there for a profit?":
+- **Sell side = sold listings.** Poshmark (`&availability=sold_out`) and Mercari (`&itemStatuses=2`) expose sold searches to a server-side render; the generic adapter has a `sold_template` per marketplace. eBay's sold filter and Grailed's sold index are closed to us.
+- **Condition tiers.** Every listing and comp is normalized to new / like-new / used / poor from its condition text and title; a buy listing is compared to comps in its own tier (like-new and used pool together), falling back to all comps when fewer than `min_comps`.
+- **Net profit after fees.** Resale venue = the one with the most comps for that tier; net = median sold × (1 − venue fee) − buy − inbound shipping. Fee table: Poshmark 20%, Mercari 13%, eBay 13.6%, Grailed 12%. Defaults: ≥ 3 comps, net ≥ $25, margin ≥ 20%. Ranked by net; suspected replicas and likely catches sink.
+- **Jev on both sides**, so a kids' jacket or a MoonSwatch never becomes a comp; photo match is against a real sale when one has a photo.
+
+Arc'teryx Beta AR: 49 comps (Poshmark 32 at $270 median, Mercari 17 at $243). Best flip: buy eBay $150 used → sells $270 on Poshmark → **net $56, 35% margin**; the "READ" listing sinks on catch risk, the $130 Poshmark one is flagged a suspected replica. Sony a7 III, Nike Dunk Panda and LEGO 75192 return no flips when the sold side is empty for them (the text says so instead of inventing a reference).
+
+Board reads the same way: "Sells for about $251 (49 sold on poshmark and mercari)", sold sales as filled dots on the price map, tabs show live + sold counts, each card: buy → sells for (n sold, tier) → fees → net and margin. No monospace anywhere (house rule now).
+
 ## Replica detection (17:40 PT)
 Jev gets the typical price as evidence and answers three questions per candidate in one request: any catch (probability), the kind of catch (read-description, damage, parts, replica/authenticity, size/variant), and *is this a replica or counterfeit* (probability). A "Chrm Hrts" ring at 2% of the going rate is the tell. Suspected replicas (replica ≥ 0.5, or reason = authenticity with catch ≥ 0.3) sink to the bottom, the board shows a red "Suspected replica (93%): priced at 8% of typical, wording looks off. Not recommended." and the text the model reads carries a WARNING naming them and telling the agent not to recommend them. Chrome Hearts cross rings: 111 listings, Mercari $24–$45 against $1,285 typical, all four cheapest flagged. Omega Speedmaster: the $265 "deals" were MoonSwatches, flagged.
 
