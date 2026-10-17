@@ -2,12 +2,13 @@
 export interface TFResult { url: string; final_url: string; title: string | null; text: string; links?: string[]; image_links?: string[]; latency_ms: number | null }
 export interface TFError { url: string; error: string; status?: number }
 
-export async function tinyfishFetch(urls: string[], opts: { format?: "markdown" | "html" | "json"; links?: boolean; images?: boolean; ttl?: number; purpose?: string } = {}) {
+export async function tinyfishFetch(urls: string[], opts: { format?: "markdown" | "html" | "json"; links?: boolean; images?: boolean; ttl?: number; purpose?: string; selectors?: string[] } = {}) {
   const key = process.env.TINYFISH_API_KEY;
   if (!key) throw new Error("TINYFISH_API_KEY missing (doppler run -p agents-want -c dev)");
   const body: Record<string, unknown> = { urls, format: opts.format ?? "markdown", links: opts.links ?? false, image_links: opts.images ?? false, per_url_timeout_ms: 60000 };
   if (opts.ttl !== undefined) body.ttl = opts.ttl;
   if (opts.purpose) body.purpose = opts.purpose;
+  if (opts.selectors?.length) body.include_selectors = opts.selectors;
   const r = await fetch("https://api.fetch.tinyfish.ai", { method: "POST", headers: { "X-API-Key": key, "content-type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) throw new Error(`tinyfish ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return (await r.json()) as { results: TFResult[]; errors: TFError[] };

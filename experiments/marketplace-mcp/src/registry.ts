@@ -4,11 +4,19 @@ import { makeGenericAdapter, type GenericConfig } from "./adapters/generic.js";
 
 const FILE = ".cache/marketplaces.json";
 
+/** Verified by add_marketplace on 2026-10-17; baked in so a fresh container has them without the cache file. */
+export const BUILTIN: GenericConfig[] = [
+  { name: "poshmark", template: "https://poshmark.com/search?query={q}", item_prefix: "/listing/", origin: "https://poshmark.com", added_at: "2026-10-17T20:40:00Z", sample_count: 48 },
+  { name: "mercari", template: "https://www.mercari.com/search?q={q}", item_prefix: "/us/item/", origin: "https://www.mercari.com", added_at: "2026-10-17T20:40:00Z", sample_count: 14 },
+  { name: "vinted", template: "https://www.vinted.com/catalog?search_text={q}", item_prefix: "/items/", origin: "https://www.vinted.com", added_at: "2026-10-17T20:40:00Z", sample_count: 95 },
+];
+
 export function loadRegistry() {
   let cfgs: GenericConfig[] = [];
   try { cfgs = JSON.parse(readFileSync(FILE, "utf8")); } catch {}
-  for (const c of cfgs) adapters[c.name] = makeGenericAdapter(c);
-  return cfgs;
+  const all = [...BUILTIN.filter((b) => !cfgs.some((c) => c.name === b.name)), ...cfgs];
+  for (const c of all) adapters[c.name] = makeGenericAdapter(c);
+  return all;
 }
 
 export function register(cfg: GenericConfig) {

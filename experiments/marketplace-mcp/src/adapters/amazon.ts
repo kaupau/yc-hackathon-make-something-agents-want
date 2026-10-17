@@ -1,4 +1,4 @@
-import { context } from "../browser.js";
+import { browserVia, context } from "../browser.js";
 import { tinyfishFetch } from "../tinyfish.js";
 import type { Adapter, Listing, Review, SearchOptions } from "../types.js";
 import { money } from "../types.js";
@@ -43,13 +43,46 @@ const ITEM_SCRIPT = `(() => {
   return { title: q("#productTitle"), price: Array.from(document.querySelectorAll("#corePriceDisplay_desktop_feature_div .a-price .a-offscreen, #corePrice_feature_div .a-offscreen, .a-price .a-offscreen")).map((e) => (e.textContent || "").trim()).find((t) => /\$\s?\d/.test(t)) || null, rating: q("#acrPopover .a-icon-alt, span[data-hook='rating-out-of-text']"), count: q("#acrCustomerReviewText"), img: img ? img.src : null, bullets, reviews };
 })()`;
 
+/**
+ * Amazon search results through TinyFish markdown (no browser), scoped to the result containers:
+ * "## <brand>" / "## <title>" / "3.5*3.5 out of 5 stars* (35)" / "Price, product page$650.00$650.00",
+ * preceded by "Sponsored" for ads. Product links cannot be aligned to results (each result also links
+ * to other colours: 60 results, 101 ids on one page), so hosted rows carry a search-by-title URL and
+ * no ASIN. The local browser path returns exact ASINs.
+ */
+export const AMAZON_RESULT_SELECTOR = "div[data-component-type='s-search-result']";
+export function amazonFromMarkdown(text: string): Listing[] {
+  const out: Listing[] = []; let heads: string[] = []; let sponsored = false; let rating: number | null = null; let reviews: number | null = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim(); if (!line) continue;
+    if (/^Sponsored/i.test(line)) { sponsored = true; continue; }
+    const h = line.match(/^##\s+(.+)/); if (h) { heads.push(h[1].trim()); continue; }
+    const rt = line.match(/^([\d.]+)\*?[\d.]* out of 5 stars\*?\s*\(?([\d,]*)\)?/); if (rt) { rating = Number(rt[1]); reviews = rt[2] ? Number(rt[2].replace(/,/g, "")) : null; continue; }
+    const pr = line.match(/^(?:Price, product page)?\$([\d,]+(?:\.\d\d)?)/);
+    if (pr && heads.length) {
+      const brand = heads.length >= 2 ? heads[heads.length - 2] : null; const title = heads.slice(-2).join(" ");
+      out.push({ marketplace: "amazon", id: `md-${out.length}`, title, price_usd: Number(pr[1].replace(/,/g, "")), condition: "new", url: `https://www.amazon.com/s?k=${encodeURIComponent(title)}`, image: null, brand, rating, review_count: reviews, sponsored });
+      heads = []; sponsored = false; rating = null; reviews = null;
+    }
+  }
+  return out;
+}
+
 const num = (s: unknown) => (s ? Number(String(s).replace(/,/g, "").match(/[\d.]+/)?.[0]) : null);
 
-export const amazon: Adapter & { lastError?: string } = {
+export const amazon: Adapter & { lastError?: string; lastPath?: string } = {
   name: "amazon",
-  via: "headless browser on amazon.com/s (live); TinyFish link-only fallback",
+  via: "local headless browser on amazon.com/s when available, else TinyFish server-side render (hosted)",
   async search(query: string, opts: SearchOptions = {}) {
     const limit = opts.limit ?? 20;
+    if (browserVia() !== "local headless chromium") {
+      // hosted: Amazon blocks datacenter browsers (Browserbase incl.), TinyFish's render gets through
+      const { results, errors } = await tinyfishFetch([`https://www.amazon.com/s?k=${encodeURIComponent(query)}`], { selectors: [AMAZON_RESULT_SELECTOR], purpose: "read product listings for price comparison" });
+      if (!results[0]) throw new Error(`amazon via tinyfish: ${errors[0]?.error ?? "no result"}`);
+      amazon.lastPath = "tinyfish markdown (search-by-title URLs)";
+      return amazonFromMarkdown(results[0].text).slice(0, limit);
+    }
+    amazon.lastPath = "local browser";
     const page = await (await context()).newPage();
     try {
       await page.goto(`https://www.amazon.com/s?k=${encodeURIComponent(query)}`, { waitUntil: "domcontentloaded", timeout: 45_000 });
