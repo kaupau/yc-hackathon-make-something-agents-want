@@ -148,7 +148,7 @@ function buildStripeProvider(stripe: StripePaymentClient, options: { webhookSecr
 
 export function getMppReadiness(options: { profileId?: string; buyerSptConfigured?: boolean; serverConfigured?: boolean } = {}): { ready: boolean; missing: string[]; note: string } {
   const missing = [!options.profileId ? 'STRIPE_PROFILE_ID' : '', !options.buyerSptConfigured ? 'Buyer SPT wallet/token provider' : '', !options.serverConfigured ? 'Test SDK key and MPP_SECRET_KEY' : ''].filter(Boolean);
-  return { ready: missing.length===0, missing, note: 'Official mppx Stripe HTTP adapter is implemented. End-to-end Stripe SPT commerce requires preview access and a buyer wallet. Direct mode remains an explicitly labeled sandbox test-card fallback.' };
+  return { ready: missing.length===0, missing, note: options.serverConfigured && options.profileId ? 'MPP server is configured. Buyers supply a scoped Stripe SPT; a live buyer wallet is a separate integration. Sandbox test-helper credentials can test this flow without real money.' : 'Configure the sandbox Stripe Profile, SDK credentials and MPP signing secret to accept scoped buyer SPT credentials. Direct mode is an explicitly labeled sandbox test-card fallback.' };
 }
 
 export interface StripeCliPaymentsOptions {

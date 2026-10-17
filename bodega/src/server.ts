@@ -323,7 +323,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
         {
           runtime: runtime.backend.mode,
           payments:
-            payments.mode === "mock" ? "simulated" : "Stripe sandbox test card",
+            payments.mode === "mock" ? "simulated" : env.BODEGA_PAYMENT_FLOW === "mpp" ? "Stripe sandbox MPP/SPT" : "Stripe sandbox test card",
           backend: vendor.persistence === 'insforge-shared' ? 'InsForge shared transactions' : remote ? "InsForge catalog + audit; local admission" : "local SQLite",
         },
         nonce,
@@ -516,7 +516,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
               approve_url: p.approval_url,
             });
       res.json({
-        delivery: "local-captured-outbox",
+        delivery: env.BODEGA_APPROVAL_EMAIL_PROVIDER === "primitive" ? "primitive" : vendor.persistence === "insforge-shared" ? "durable-operator-inbox" : "local-captured-outbox",
         messages: 'deliveryOutbox' in vendor ? vendor.deliveryOutbox : [],
         notifications: await vendor.notifications.list({limit:50}),
         pending,
