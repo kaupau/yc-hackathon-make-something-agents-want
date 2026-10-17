@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {execFile} from 'node:child_process';
+import{randomUUID}from'node:crypto';
+import{createSharedVendorServices,type VendorRpc}from'./shared.js';
+import type{Trial,Purchase}from'../contracts/index.js';
+
+const dsn=process.env.BODEGA_VENDOR_TEST_PSQL;
+test('Postgres replicas enforce shared trial admission, pool usage, stable one-use approvals and revocation',{skip:!dsn},async()=>{
+  const rpc:VendorRpc=(fn,args)=>new Promise(resolve=>{
+    if(!/^bodega_vendor_[a-z_]+$/.test(fn))throw Error('Invalid test RPC');
+    const c=execFile('psql',[dsn!,'-XqtA','-v','ON_ERROR_STOP=1','-v','payload='+JSON.stringify(args.p)],(error,stdout)=>resolve(error?{data:null,error:{message:'SQL failed'}}:{data:JSON.parse(stdout),error:null}));
+    c.stdin!.end(`SELECT public.${fn}(:'payload'::jsonb);\n`);
+  });
+  const opts={rpc,keySecret:'pg-vendor-test-shared-secret-0123456789',env:{},publicUrl:'https://bodega.example',maxActiveTrials:3};
+  const a=await createSharedVendorServices(opts),b=await createSharedVendorServices(opts);
+  const listing=(await a.catalog.get('postpigeon-email'))!;
+  await a.catalog.upsert({...listing,trial:{...listing.trial!,per_agent:2,pool_total:3,max_concurrent:100}});
+  const prefix='qa-'+randomUUID();const start=Date.now();
+  const trials:Trial[]=Array.from({length:15},(_,i)=>({id:prefix+i,listing_id:listing.id,session_id:prefix+i,sandbox_id:'synthetic',status:'active',used:0,limit:2,unit:'api_calls',token:prefix+'token'+i,started_at:new Date(start).toISOString(),expires_at:new Date(start+60000).toISOString()}));
+  const admissions=await Promise.allSettled(trials.map((t,i)=>(i%2?a:b).ledger.createTrial(t)));
+  const accepted=trials.filter((_,i)=>admissions[i].status==='fulfilled');assert.equal(accepted.length,3);
+  const usage=await Promise.allSettled(Array.from({length:15},(_,i)=>(i%2?a:b).ledger.recordUsage(accepted[i%3].id,1)));
+  assert.equal(usage.filter(x=>x.status==='fulfilled').length,3);
+  assert.equal((await b.catalog.get(listing.id))!.trial!.pool_used,3);
+  await a.catalog.upsert({...listing,trial:{...listing.trial!,per_agent:2,pool_total:3,pool_used:0,max_concurrent:100}});
+  assert.equal((await b.catalog.get(listing.id))!.trial!.pool_used,3);
+  for(const t of accepted)await a.ledger.updateTrial(t.id,{status:'ended'});
+  await assert.rejects(b.ledger.updateTrial(accepted[0].id,{status:'active'}),/reactivated/);
+  const purchase:Purchase={id:prefix+'purchase',session_id:prefix,listing_id:listing.id,amount_usd:2,status:'needs_approval',created_at:new Date().toISOString()};
+  await a.ledger.recordPurchase(purchase);
+  const links=await Promise.all([a.approvals.request(purchase,'qa@example.com'),b.approvals.request(purchase,'qa@example.com')]);
+  assert.equal(links[0].approve_url,links[1].approve_url);
+  const token=links[0].approve_url.split('/').at(-1)!;
+  assert.ok(await b.approvals.inspect(token));
+  const decisions=await Promise.all([a.approvals.decide(token,'approved'),b.approvals.decide(token,'approved')]);assert.equal(decisions.filter(Boolean).length,1);
+  assert.equal(await a.approvals.status(purchase.id),'approved');assert.equal(await b.approvals.inspect(token),null);
+  const lease=await a.vault.lease(listing.id,prefix+'lease');assert.deepEqual(await b.vault.lease(listing.id,prefix+'lease'),lease);
+  await b.vault.revoke(prefix+'lease');assert.equal(await a.vault.authorizedPostPigeon(lease.secret),false);
+  await assert.rejects(a.vault.lease(listing.id,prefix+'lease'),/revoked/);
+});

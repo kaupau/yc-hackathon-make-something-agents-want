@@ -1,13 +1,9 @@
 node_modules/
 dist/
-.env
-.env.*
 *.log
 .DS_Store
 .mcp-use/cloud/link.json
 .bodega/
-.projects/vault/
-.projects/cache/
 
 # InsForge & AI agent skills
 .insforge
@@ -24,6 +20,18 @@ dist/
 .trae
 .windsurf
 
-!.env.example
 .insforge/
 .claude/skills/
+
+.projects/cache
+.projects/vault
+.projects/state.test.json
+.projects/state.local.test.json
+.env
+.env.*
+!.env.example
+
+# Stripe Projects local state and generated editor setup
+.projects/
+.cursor/
+.cursorignore

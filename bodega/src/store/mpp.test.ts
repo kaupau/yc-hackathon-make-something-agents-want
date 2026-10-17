@@ -9,7 +9,7 @@ import {
   createStripePayments,
   type StripePaymentClient,
 } from "./payments.js";
-async function setup() {
+async function setup(destination?: string) {
   let mutations = 0;
   let snapshot: any;
   const client = {
@@ -44,7 +44,11 @@ async function setup() {
     env: {},
     dbPath: ":memory:",
     walletPath: ":memory:",
-    payments,
+    payments: destination ? {
+      ...payments,
+      prepare: async order => ({ ...order, sellerAccountId: destination, platformFeeCents: 0 }),
+      inspect: (order, id) => payments.inspect({ ...order, sellerAccountId: destination, platformFeeCents: 0 }, id),
+    } : payments,
   });
   app.storefront.options.paymentFlow = "mpp";
   const purchase: any = await app.storefront.buy("postpigeon-email");
@@ -118,4 +122,18 @@ test("official MPP SPT flow verifies receipt before fulfillment and replay does 
   } finally {
     await h.app.close();
   }
+});
+
+test("MPP destination settlement preserves base wallet binding and verifies the seller receipt", async () => {
+  const h = await setup("acct_sandboxseller");
+  try {
+    const url = "http://127.0.0.1:8787/mpp/" + h.purchase.purchase_id;
+    const challenge = Challenge.fromResponse(await h.handler(new Request(url)));
+    const credential = Credential.serialize({ challenge, payload: { spt: "spt_destination_fixture", externalId: h.purchase.purchase_id } });
+    const result = await h.handler(new Request(url, { headers: { authorization: credential } }));
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).status, "paid");
+    assert.equal((await h.app.storefront.wallet()).spent_usd, 0.9);
+    assert.equal(h.mutations, 1);
+  } finally { await h.app.close(); }
 });

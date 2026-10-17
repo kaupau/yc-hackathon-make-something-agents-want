@@ -32,7 +32,7 @@ Each customer is provisioned by the administrator with an ID, approver email, bu
 - API (Bearer administrator token): `POST /admin/customers`, `GET /admin/customers` (metadata only, never tokens/hashes), `POST /admin/customers/:id/credentials` (`{"revoke_existing":true}` rotates), `POST /admin/credentials/:id/revoke`, `POST /admin/customers/:id/active`.
 - Agents send `Authorization: Bearer <token>` to `/mcp` and `X-Bodega-Agent-Token: <token>` to `/mpp/:purchase_id`.
 
-`BODEGA_IDENTITY_BACKEND=sqlite` (default, `.bodega/identity.sqlite`) or `insforge` (server-only RPC functions from `../migrations/20261017210002_customer-identities.sql`, requires `INSFORGE_URL`/`INSFORGE_API_KEY`). The legacy `BODEGA_AGENT_TOKEN` still works but only for the legacy `BODEGA_WALLET_ID` wallet. Without any legacy token, local loopback demos keep anonymous access to the legacy wallet unless `BODEGA_REQUIRE_AGENT_AUTH=1` (implied by the InsForge backend); a malformed or revoked credential never falls back to anonymous access.
+`BODEGA_IDENTITY_BACKEND=sqlite` (default, `.bodega/identity.sqlite`) or `insforge` (server-only RPC functions from `../migrations/20261017211453_customer-identities.sql`, requires `INSFORGE_URL`/`INSFORGE_API_KEY`). The legacy `BODEGA_AGENT_TOKEN` still works but only for the legacy `BODEGA_WALLET_ID` wallet. Without any legacy token, local loopback demos keep anonymous access to the legacy wallet unless `BODEGA_REQUIRE_AGENT_AUTH=1` (implied by the InsForge backend); a malformed or revoked credential never falls back to anonymous access.
 
 ## Payments and approvals
 
@@ -50,13 +50,13 @@ The official `mppx` Stripe adapter is implemented at `/mpp/:purchase_id`. Enable
 
 Challenges bind the immutable purchase, amount, scope, expiry, and metadata. Before mutation the server verifies the sandbox account, pins the first SPT hash and purchase idempotency key, then independently retrieves the receipt before issuing access. The raw SPT is never stored. Missing buyer credentials never fall back to a test card in this flow.
 
-Protocol tests exercise official challenge creation, credential serialization, tamper rejection, receipt verification, and replay with a fake Stripe transport. **Actual buyer-wallet/SPT commerce is not yet verified**: it requires Stripe preview access and a buyer token provider. `/health` reports the configuration gaps. This is distinct from the separately verified sandbox test-card fallback.
+Protocol tests exercise official challenge creation, credential serialization, tamper rejection, receipt verification and replay. The hosted Railway endpoint also completed a real Stripe sandbox SPT purchase issued by the official test helper: HTTP 402 challenge, $0.90 destination charge to the synthetic Express seller, zero marketplace fee, verified receipt, replay without another charge, and signed webhook recorded in InsForge. The hidden sandbox Stripe Profile is `@bodega_development`. A real buyer wallet remains an external integration requirement; `/health` reports that gap. The test-helper credential does not represent a live human card or real vendor payout.
 
 ## Runtime and provider status
 
 - `simulated` accepts commands without executing them and labels outputs. It never ranks real providers using fake timings.
 - `blaxel` uses `BL_API_KEY`, `BL_WORKSPACE`, and optional `BL_REGION`. Commands and files run only in the cloud sandbox, never on this host. Sandboxes get only scoped Bodega proxy credentials. TTL cleanup, bounded execution, revocation, output limits, exact upstream allowlists, redirect denial, and atomic metering constrain use. A public HTTPS proxy URL is needed for cloud trials; localhost is not reachable from Blaxel.
-- Primitive and Inkbox adapters require their own server credentials. Primitive login was skipped at the user's request; no real email roundtrip has been claimed.
+- Primitive and Inkbox adapters require their own server credentials. Primitive is authenticated and its real self-addressed send/receive roundtrip passed. The production proxy allocates a separate mailbox namespace per customer. Inkbox credentials remain absent.
 - PostPigeon is an explicit simulation: send succeeds, receive intentionally fails authorization. The remaining catalog capabilities are simulated.
 
 ## InsForge backend
@@ -65,7 +65,7 @@ The linked **Bodega** development project is in `us-west`: https://insforge.dev/
 
 With server-only `INSFORGE_URL` and `INSFORGE_API_KEY`, startup loads the remote catalog and syncs safe catalog and trial/purchase/review/comparison audit records through a durable SQLite outbox. Browser and authenticated user roles have no access to these tables. Tokens, upstream keys, leases, approval links, and sandbox identifiers are omitted from audit payloads. `/health` reports sync backlog and errors.
 
-**This is a single-server hybrid backend**: wallet reservations, trial admission, pooled quota, and human approvals remain authoritative in local SQLite. Keep `.bodega` on a durable private volume, including the wallet signing key. Do not run independent replicas against separate SQLite volumes. Multi-instance transactions and tenant identity/RLS require a subsequent backend migration.
+The `insforge` wallet, identity, vendor and Connect backends use server-only database transactions for shared budgets, trial admission, pooled quotas, approvals and seller settlement. Local SQLite remains available for local demos. Set `BODEGA_WALLET_BACKEND=insforge`, `BODEGA_IDENTITY_BACKEND=insforge`, `BODEGA_VENDOR_BACKEND=insforge` and `BODEGA_CONNECT_BACKEND=insforge` after applying the repository migrations. Preserve `BODEGA_PROJECT_KEY_SECRET` and `BODEGA_VENDOR_KEY_SECRET` across replicas; each must be at least 32 bytes. Set `BODEGA_AUTH_CACHE_MS=0` for immediate cross-instance revocation. Keep InsForge admin credentials on the server; public and authenticated database roles cannot access these tables or RPCs.
 
 ## How Stripe products fit
 
@@ -73,7 +73,7 @@ With server-only `INSFORGE_URL` and `INSFORGE_API_KEY`, startup loads the remote
 | --- | --- | --- |
 | Stripe Projects | Provision developer infrastructure and manage provider credentials | Catalog checked; provisioning blocked by a separate live-mode Projects login/onboarding |
 | PaymentIntents | Record sandbox credit-pack purchases and verify receipts | Real sandbox test and idempotent replay verified |
-| MPP + Stripe SPT | Buyer agents answer 402 challenges with scoped payment credentials | Official adapter and protocol tests implemented; actual buyer wallet/preview access pending |
+| MPP + Stripe SPT | Buyer agents answer 402 challenges with scoped payment credentials | Hosted sandbox test-helper SPT destination payment and replay verified; real buyer wallet pending |
 | Connect | Onboard real tool vendors and distribute marketplace revenue | Production seller onboarding, charge model, fees, liability, and payouts not configured |
 | Billing | Optional platform plans or metered subscription billing | Not configured; current purchases are one-time credit packs |
 | Tax | Calculate tax when the production business and registrations are defined | Not configured; sandbox only |
@@ -108,6 +108,16 @@ Hosted development URL: https://bodega-production-4802.up.railway.app . Project:
 
 Railway MCP access requires its private `BODEGA_AGENT_TOKEN`. The local `.bodega/railway-mcp.json` contains a ready-to-use authenticated client configuration; it is intentionally excluded from Git. The homepage and public catalog are readable without that token. Administrator approval access uses a different private token. Railway service variables contain the Blaxel key and InsForge project key; the personal InsForge user key is not uploaded.
 
-Cloud payments are currently `mock`, clearly labeled by the app. The verified Stripe CLI fallback remains local to this Mac. To enable sandbox payments on Railway, configure a server-only Stripe test key for the same Bodega sandbox and change `BODEGA_PAYMENTS=stripe`. This is independent of real Blaxel trial execution. Primitive and Inkbox still require their provider credentials; PostPigeon remains a simulated provider even when its tests run in a real Blaxel sandbox.
+Railway uses `BODEGA_PAYMENTS=stripe` with a restricted Bodega Development sandbox key and a signed PaymentIntent webhook. `BODEGA_CONNECT=1` enforces registered Express seller destinations and a zero marketplace fee; sellers without active transfers cannot be purchased. Primitive credentials and a managed inbox are installed. Its hosted MCP comparison passed a real send/receive roundtrip through a Blaxel sandbox (595 ms send, 328 ms delivery, two vendor-funded calls, zero wallet spend), and the trial ended. Inkbox credentials remain absent. PostPigeon remains a simulated provider even when its tests run in a real Blaxel sandbox.
 
 Railway mounts volumes as root. The container entrypoint prepares the private volume directory and then drops to the Node user before starting the app. Healthcheck host access is allowed only for `GET /health`. Deployment uploads are built from an explicit source-file allowlist so local `.env`, `.bodega`, transcripts, credentials and CLI configuration are not included in the upload.
+
+## Stripe Projects
+
+Stripe Projects is initialized under Àjamais AI, with the hosted Bodega URL registered as a project variable. The existing Railway service and Blaxel workspace stay outside Projects: both catalog providers currently report that adopting existing resources is unsupported. No duplicate hosting or sandbox resources were provisioned. App payment credentials remain scoped to Bodega Development even though Projects uses the separately authorized live account CLI context. Never commit `.projects/` or generated environment files.
+
+## Verification and launch boundary
+
+The full local suite has 78 passing tests and one opt-in PostgreSQL test skipped by default. Separate PostgreSQL checks exercised shared concurrent reservations, global trial admission, metering, approval retry stability and revocation. Actual InsForge checks confirmed shared wallet admission and immediate cross-instance credential revocation. Hosted Primitive approval notifications were delivered to the organization’s test inbox; declining the one-use approval released the reservation without spending.
+
+The PostPigeon seller is explicitly synthetic, with Stripe-provided sandbox identity and bank data. Other sellers require their own authentic onboarding before checkout; the server refuses an unready destination. Inkbox has no credential configured. Real seller KYC, live buyer-wallet integration, refund/dispute operations and production launch remain outside this verified sandbox demonstration. Claude’s attempted final hosted test hit its session limit, so the observed MCP email and payment checks were completed directly with the MCP SDK.

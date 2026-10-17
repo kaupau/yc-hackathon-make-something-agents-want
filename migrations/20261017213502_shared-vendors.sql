@@ -553,7 +553,7 @@ BEGIN
   SELECT * INTO v_t FROM public.bodega_vendor_trials WHERE id = p->>'id' FOR UPDATE;
   IF NOT FOUND THEN RETURN public.bodega_vendor__err('not_found', 'Unknown trial'); END IF;
   FOR v_field IN SELECT jsonb_object_keys(v_expect) LOOP
-    IF CASE v_field
+    IF (CASE v_field
          WHEN 'listing_id' THEN v_t.listing_id IS DISTINCT FROM v_expect->>v_field
          WHEN 'session_id' THEN v_t.session_id IS DISTINCT FROM v_expect->>v_field
          WHEN 'token_hash' THEN v_t.token_hash IS DISTINCT FROM v_expect->>v_field
@@ -562,7 +562,7 @@ BEGIN
          WHEN 'unit' THEN v_t.unit IS DISTINCT FROM v_expect->>v_field
          WHEN 'started_at' THEN v_t.started_at IS DISTINCT FROM (v_expect->>v_field)::timestamptz
          WHEN 'expires_at' THEN v_t.expires_at IS DISTINCT FROM (v_expect->>v_field)::timestamptz
-         ELSE true END THEN
+         ELSE true END) THEN
       RETURN public.bodega_vendor__err('invalid', 'Trial ' || v_field || ' is immutable; use recordUsage');
     END IF;
   END LOOP;
@@ -656,12 +656,12 @@ BEGIN
   SELECT * INTO v_row FROM public.bodega_vendor_purchases WHERE id = p->>'id' FOR UPDATE;
   IF NOT FOUND THEN RETURN public.bodega_vendor__err('not_found', 'Unknown purchase'); END IF;
   FOR v_field IN SELECT jsonb_object_keys(v_expect) LOOP
-    IF CASE v_field
+    IF (CASE v_field
          WHEN 'listing_id' THEN v_row.listing_id IS DISTINCT FROM v_expect->>v_field
          WHEN 'session_id' THEN v_row.session_id IS DISTINCT FROM v_expect->>v_field
          WHEN 'amount_usd' THEN v_row.amount_usd IS DISTINCT FROM (v_expect->>v_field)::numeric
          WHEN 'created_at' THEN v_row.created_at IS DISTINCT FROM (v_expect->>v_field)::timestamptz
-         ELSE true END THEN
+         ELSE true END) THEN
       RETURN public.bodega_vendor__err('invalid', 'Purchase ' || v_field || ' is immutable');
     END IF;
   END LOOP;
@@ -798,11 +798,17 @@ BEGIN
     RETURN public.bodega_vendor__err('invalid', 'Record purchase before requesting approval');
   END IF;
   SELECT * INTO v_existing FROM public.bodega_vendor_approvals WHERE purchase_id = v_purchase.id FOR UPDATE;
-  IF FOUND AND v_existing.status <> 'pending' THEN
-    RETURN public.bodega_vendor__err('conflict', 'Approval already decided');
+  IF FOUND THEN
+    IF v_existing.status <> 'pending' THEN
+      RETURN public.bodega_vendor__err('conflict', 'Approval already decided');
+    END IF;
+    IF v_existing.token_hash IS DISTINCT FROM p->>'token_hash' THEN
+      RETURN public.bodega_vendor__err('conflict', 'Shared approval signing secret mismatch');
+    END IF;
+    RETURN jsonb_build_object('ok', true, 'expires_at', v_existing.expires_at);
   END IF;
   v_expires := now() + make_interval(secs => (v_ttl / 1000)::double precision);
-  -- A new request rotates the token: any previously issued link stops working.
+  -- One stable hash and deadline per purchase; replica retries never invalidate the first link.
   INSERT INTO public.bodega_vendor_approvals (purchase_id, session_id, listing_id, amount_usd, token_hash, status, expires_at)
   VALUES (v_purchase.id, v_purchase.session_id, v_purchase.listing_id, v_purchase.amount_usd, p->>'token_hash',
           'pending', v_expires)

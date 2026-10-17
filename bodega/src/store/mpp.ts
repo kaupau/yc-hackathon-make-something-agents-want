@@ -128,7 +128,7 @@ export function createMppHandler(store: Storefront, options: MppOptions) {
         );
       }
       if (!reference) throw new Error("Missing verified receipt");
-      await store.completePayment(order, {
+      await store.completePayment(baseOrder, {
         status: "paid",
         paymentIntentId: reference,
       });

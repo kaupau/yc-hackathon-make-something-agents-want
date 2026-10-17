@@ -19,7 +19,7 @@ import {
   getMppReadiness,
   type PaymentProvider,
 } from "./store/payments.js";
-import { createVendorServices } from "./vendor/index.js";
+import { createConfiguredVendorServices } from "./vendor/index.js";
 import {
   createTrialRuntime,
   createProxyHandler,
@@ -91,7 +91,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
     throw new Error(
       "BODEGA_IDENTITY_BACKEND=insforge requires server-only INSFORGE_URL and INSFORGE_API_KEY",
     );
-  const vendor = createVendorServices({
+  const vendor = await createConfiguredVendorServices({
     dbPath: options.dbPath,
     publicUrl,
     adminToken,
@@ -99,7 +99,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
     deliverApproval: primitiveApprovalDelivery(env, publicUrl),
   });
   const remote =
-    env.INSFORGE_URL && env.INSFORGE_API_KEY
+    vendor.persistence !== 'insforge-shared' && env.INSFORGE_URL && env.INSFORGE_API_KEY
       ? await connectInsforge(vendor, {
           url: env.INSFORGE_URL,
           apiKey: env.INSFORGE_API_KEY,
@@ -297,7 +297,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
       ok: true,
       runtime: runtime.backend.mode,
       payments: payments.mode === "mock" ? "simulated" : "stripe-sandbox",
-      persistence: remote?.status() ?? "local-sqlite",
+      persistence: remote?.status() ?? vendor.persistence,
       wallet: state.kind,
       connect: { enabled: !!connect, marketplace_fee_percent: 0, charge_pattern: connect ? "destination" : null },
       identity: {
@@ -324,9 +324,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
           runtime: runtime.backend.mode,
           payments:
             payments.mode === "mock" ? "simulated" : "Stripe sandbox test card",
-          backend: remote
-            ? "InsForge catalog + audit; local admission"
-            : "local SQLite",
+          backend: vendor.persistence === 'insforge-shared' ? 'InsForge shared transactions' : remote ? "InsForge catalog + audit; local admission" : "local SQLite",
         },
         nonce,
       ),
@@ -519,7 +517,8 @@ export async function createApplication(options: ApplicationOptions = {}) {
             });
       res.json({
         delivery: "local-captured-outbox",
-        messages: vendor.deliveryOutbox,
+        messages: 'deliveryOutbox' in vendor ? vendor.deliveryOutbox : [],
+        notifications: await vendor.notifications.list({limit:50}),
         pending,
       });
     } catch {

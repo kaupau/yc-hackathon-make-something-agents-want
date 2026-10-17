@@ -1,7 +1,7 @@
 // Shared, authoritative vendor backend on InsForge (BODEGA_VENDOR_BACKEND=insforge).
 //
 // Every read and write goes through server-only RPC functions defined in
-// migrations/20261017210003_shared-vendors.sql. Each RPC is one database transaction, so quota admission,
+// migrations/20261017213502_shared-vendors.sql. Each RPC is one database transaction, so quota admission,
 // usage metering, approval decisions and lease revocation are atomic across all replicas.
 //
 // Secrets: trial tokens, approval tokens and PostPigeon scoped keys only ever reach the database as SHA-256
@@ -250,13 +250,13 @@ export class SharedLedger implements Ledger {
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 export class SharedApprovals implements Approvals {
-  constructor(private rpc: VendorRpc, private baseUrl: string, private ttl: number, private deliver?: (message: ApprovalMessage) => Promise<void>) {}
+  constructor(private rpc: VendorRpc, private baseUrl: string, private ttl: number, private deliver: ((message: ApprovalMessage) => Promise<void>) | undefined, private tokenKey: Buffer) {}
   async request(purchase: Purchase, human_email: string): Promise<{ approve_url: string }> {
     if (purchase?.status !== "needs_approval" || typeof human_email !== "string" || !human_email || human_email.length > 320 || /[\r\n]/.test(human_email)) throw new Error("Invalid approval request");
-    const token = opaque();
+    const token = createHmac('sha256',this.tokenKey).update('approval/v1\0'+canonical([purchase.id,purchase.session_id,purchase.listing_id,purchase.amount_usd])).digest('base64url');
     const approve_url = `${this.baseUrl}/approve/${token}`;
     const subject = `Approve Bodega purchase: $${purchase.amount_usd.toFixed(2)}`;
-    const notificationId = `ntf_${randomUUID()}`;
+    const notificationId = `ntf_approval_${hash(purchase.id)}`;
     await call(this.rpc, "bodega_vendor_approval_request", {
       purchase: { id: purchase.id, session_id: purchase.session_id, listing_id: purchase.listing_id, amount_usd: purchase.amount_usd },
       token_hash: hash(token), ttl_ms: this.ttl,
@@ -425,7 +425,7 @@ export async function createSharedVendorServices(options: SharedVendorServicesOp
   const catalog = new SharedCatalog(rpc);
   const ledger = new SharedLedger(rpc, maxActive);
   const vault = new SharedVault(rpc, keys, publicUrl, env, options.upstreams, options.fetcher);
-  const approvals = new SharedApprovals(rpc, publicUrl, ttl, options.deliverApproval);
+  const approvals = new SharedApprovals(rpc, publicUrl, ttl, options.deliverApproval, keys.scopedKeyMac);
   const notifications = new SharedNotifications(rpc);
   if (options.seed !== false) {
     try { await catalog.seed(LISTINGS.map(l => l.id === POSTPIGEON ? { ...l, docs_url: `${publicUrl}/postpigeon/docs` } : l)); }
