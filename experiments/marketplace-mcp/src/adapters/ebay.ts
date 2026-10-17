@@ -26,7 +26,9 @@ function fromHtml(html: string, sold: boolean): Listing[] {
   return out;
 }
 
-function fromMarkdown(md: string, links: string[], sold: boolean): Listing[] {
+function fromMarkdown(md: string, links: string[], sold: boolean, images: string[] = []): Listing[] {
+  // listing photos are i.ebayimg.com/images/g/<id>/s-l*.webp in result order; Jev needs JPEG so swap the extension
+  const imgs = [...new Set(images.filter((u) => /i\.ebayimg\.com\/images\/g\//.test(u)))].map((u) => u.replace(/s-l\d+\.webp$/, "s-l500.jpg").replace(/\.webp$/, ".jpg"));
   // eBay's page template carries a dummy /itm/123456 link; with it removed, link order matches bullet order (verified against item pages 2026-10-17)
   const ids = [...new Set(links.map((l) => l.match(/\/itm\/(\d+)/)?.[1]).filter((x) => x && x !== "123456"))] as string[];
   const bullets = md.split("\n").filter((l) => l.startsWith("* ") && /\$\s?\d/.test(l));
@@ -37,7 +39,7 @@ function fromMarkdown(md: string, links: string[], sold: boolean): Listing[] {
     const prices = [...text.matchAll(/\$\s?([\d,]+(?:\.\d\d)?)/g)].map((m) => Number(m[1].replace(/,/g, "")));
     const ship = text.match(/\+\$\s?([\d,]+(?:\.\d\d)?)/)?.[1];
     const id = ids[i] ?? `md-${i}`;
-    return { marketplace: "ebay", id, title, price_usd: prices[0] ?? null, condition: cond, url: `https://www.ebay.com/itm/${id}`, image: null, shipping_usd: ship ? Number(ship.replace(/,/g, "")) : /Free (shipping|delivery)/i.test(text) ? 0 : null, sold };
+    return { marketplace: "ebay", id, title, price_usd: prices[0] ?? null, condition: cond, url: `https://www.ebay.com/itm/${id}`, image: imgs[i] ?? null, shipping_usd: ship ? Number(ship.replace(/,/g, "")) : /Free (shipping|delivery)/i.test(text) ? 0 : null, sold };
   });
 }
 
@@ -50,9 +52,9 @@ export const ebay: Adapter = {
     const html = await tinyfishFetch([url], { format: "html", purpose: "read product listings for price comparison" });
     let rows = html.results[0] ? fromHtml(html.results[0].text, sold) : [];
     if (rows.length === 0) {
-      const md = await tinyfishFetch([url], { format: "markdown", links: true, purpose: "read product listings for price comparison" });
+      const md = await tinyfishFetch([url], { format: "markdown", links: true, images: true, purpose: "read product listings for price comparison" });
       if (md.errors.length) throw new Error(`ebay via tinyfish: ${md.errors.map((e) => e.error).join(",")}`);
-      rows = fromMarkdown(md.results[0].text, md.results[0].links ?? [], sold);
+      rows = fromMarkdown(md.results[0].text, md.results[0].links ?? [], sold, (md.results[0] as any).image_links ?? []);
       (ebay as any).lastPath = "markdown";
     } else (ebay as any).lastPath = "html";
     return rows.filter((r) => r.title && !/Shop on eBay/i.test(r.title)).slice(0, limit);

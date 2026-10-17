@@ -2,14 +2,17 @@ import { MCPServer } from "mcp-use";
 import { z } from "zod";
 import { adapters, marketplaces } from "./adapters/index.js";
 import { arbitrage } from "./arbitrage.js";
+import { discover } from "./adapters/generic.js";
 import { jevAvailable } from "./jev.js";
+import { loadRegistry, register } from "./registry.js";
 import type { Listing } from "./types.js";
 
 /** Token-light listing for tool results: agents pay per token, so no raw payloads. */
-const compact = (l: Listing) => ({ m: l.marketplace, id: l.id, title: l.title.slice(0, 90), usd: l.price_usd, cond: l.condition, url: l.url, ...(l.size ? { size: l.size } : {}), ...(l.rating != null ? { rating: l.rating, reviews: l.review_count } : {}), ...(l.sold ? { sold: true } : {}), ...(l.shipping_usd != null ? { ship: l.shipping_usd } : {}) });
+const compact = (l: Listing) => ({ m: l.marketplace, id: l.id, title: l.title.slice(0, 90), usd: l.price_usd, cond: l.condition, url: l.url, ...(l.image ? { img: l.image } : {}), ...(l.size ? { size: l.size } : {}), ...(l.rating != null ? { rating: l.rating, reviews: l.review_count } : {}), ...(l.sold ? { sold: true } : {}), ...(l.shipping_usd != null ? { ship: l.shipping_usd } : {}) });
 const text = (o: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(o) }], structuredContent: o as any });
 
-const server = new MCPServer({ name: "marketplace-mcp", version: "0.1.0" });
+loadRegistry();
+const server = new MCPServer({ name: "marketplace-mcp", version: "0.2.0" });
 
 server.tool({
   name: "marketplaces",
@@ -49,6 +52,19 @@ server.tool({
 }, async ({ query, limit, min_spread_pct }) => {
   const r = await arbitrage(query, { limit, min_spread_pct });
   return text({ ...r, opportunities: r.opportunities.map((o) => ({ ...o, listing: compact(o.listing) })) });
+});
+
+server.tool({
+  name: "add_marketplace",
+  description: "Onboard a new marketplace from its URL with no code: tries the common search-URL shapes, recovers listings from the rendered page (title, price, size, link), keeps the shape that returns relevant results, and registers it so search()/arbitrage() include it from now on. Works where the site renders server-side (verified: poshmark.com, mercari.com, vinted.com). 20-50 s.",
+  inputSchema: z.object({ url: z.string().describe("homepage, or a search URL with a sample query in it"), probe_query: z.string().default("nike hoodie") }),
+  annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: true },
+}, async ({ url, probe_query }) => {
+  try {
+    const d = await discover(url, probe_query);
+    register(d.cfg);
+    return text({ added: d.cfg.name, template: d.cfg.template, item_prefix: d.cfg.item_prefix, listings_on_probe: d.cfg.sample_count, sample: d.sample.map(compact), tried: d.tried });
+  } catch (e: any) { return text({ error: e.message }); }
 });
 
 export default server;

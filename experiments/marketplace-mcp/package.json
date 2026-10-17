@@ -13,6 +13,7 @@
     "cheerio": "^1.0.0",
     "mcp-use": "^2.10.0",
     "playwright": "^1.55.0",
+    "sharp": "^0.34.5",
     "zod": "^4.0.0"
   },
   "devDependencies": {

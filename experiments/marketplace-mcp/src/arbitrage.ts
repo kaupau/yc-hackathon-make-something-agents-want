@@ -1,11 +1,11 @@
 import { adapters } from "./adapters/index.js";
 import { ebay } from "./adapters/ebay.js";
-import { relevance } from "./jev.js";
+import { catchRisk, relevance, samePhoto } from "./jev.js";
 import type { Listing } from "./types.js";
 
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null; };
 
-export interface Opportunity { listing: Listing; reference_usd: number; reference_from: string; spread_usd: number; spread_pct: number; relevance: number }
+export interface Opportunity { listing: Listing; reference_usd: number; reference_from: string; spread_usd: number; spread_pct: number; relevance: number; counterpart?: { marketplace: string; url: string; price_usd: number | null }; photo_match?: number | null; catch_risk?: number }
 
 /**
  * Cross-marketplace price gaps for one product query.
@@ -37,5 +37,13 @@ export async function arbitrage(query: string, opts: { limit?: number; min_sprea
     if (pct >= (opts.min_spread_pct ?? 0.25)) opps.push({ listing: l, reference_usd: ref, reference_from: from, spread_usd: Math.round(spread), spread_pct: Math.round(pct * 100) / 100, relevance: Math.round(r * 100) / 100 });
   }
   opps.sort((a, b) => b.spread_usd - a.spread_usd);
-  return { query, reference: { sold_comps: soldPrices.length, sold_median_usd: soldMedian }, by_marketplace: byMarket, considered: listings.length, kept_after_relevance: kept.length, opportunities: opps.slice(0, opts.limit ?? 5), errors };
+  // Evidence pass on the top opportunities only: a photo comparison against the cheapest priced listing with a photo on another marketplace, and a text "catch" check.
+  const top = opps.slice(0, opts.limit ?? 5);
+  await Promise.all(top.map(async (o) => {
+    const cp = kept.map((x) => x.l).filter((l) => l.marketplace !== o.listing.marketplace && l.image && l.price_usd !== null).sort((a, b) => a.price_usd! - b.price_usd!)[0];
+    const [pm, cr] = await Promise.all([cp ? samePhoto(o.listing, cp) : Promise.resolve(null), catchRisk(o.listing)]);
+    if (cp) o.counterpart = { marketplace: cp.marketplace, url: cp.url, price_usd: cp.price_usd };
+    o.photo_match = pm === null ? null : Math.round(pm * 100) / 100; o.catch_risk = Math.round(cr * 100) / 100;
+  }));
+  return { query, reference: { sold_comps: soldPrices.length, sold_median_usd: soldMedian }, by_marketplace: byMarket, considered: listings.length, kept_after_relevance: kept.length, opportunities: top, errors };
 }
