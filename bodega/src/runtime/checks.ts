@@ -26,7 +26,7 @@ try {
   if (!inbox) throw new Error('No configured trial mailbox');
   const path = config.vendor === 'inkbox' ? '/mail/mailboxes/' + encodeURIComponent(inbox) + '/messages' : config.vendor === 'primitive' ? '/send-mail' : '/messages';
   const start = Date.now();
-  await api(path, config.vendor === 'inkbox' ? { recipients: { to: [inbox] }, subject: tag, body_text: tag } : { from: inbox, to: inbox, subject: tag, body_text: tag, text: tag });
+  await api(path, config.vendor === 'inkbox' ? { recipients: { to: [inbox] }, subject: tag, body_text: tag } : { from: inbox, to: inbox, subject: tag, body_text: tag });
   const sent = Date.now();
   while (Date.now() < deadline) {
     const pollPath = config.vendor === 'primitive' ? '/emails?limit=100' : path + '?direction=inbound&limit=100';
