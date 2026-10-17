@@ -1,0 +1,14 @@
+{
+ "mcpServers": {
+  "spike": {
+   "command": "node",
+   "args": [
+    "./stdio-server.mjs"
+   ],
+   "env": {
+    "WAIT_MS": "5000",
+    "SPIKE_LOG": "./spike.log"
+   }
+  }
+ }
+}
