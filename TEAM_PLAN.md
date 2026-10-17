@@ -262,6 +262,18 @@ The response's `mcpUrl` is the Manufact gateway URL. That is the URL in the demo
 
 **4. Rehearse against the gateway URL, not Railway.** `claude mcp add --transport http bodega <mcpUrl>` with no bearer header (the gateway holds the upstream auth). Fresh `BODEGA_WALLET_ID` is a Railway env var, so each full rehearsal that buys something needs Amedeo to rotate it or the wallet shows yesterday's spend. Trials never reset per session either.
 
+### Executed 2026-10-17 ~16:15 PT (Kaushik's session, with a Railway project token from Amedeo)
+- Railway redeployed from `bodega/ui` (merged UI on top of codex/storefront) with `railway up --service bodega` from `bodega/`, plus a `.railwayignore` so `.env`, `.bodega`, `node_modules`, `.cache`, `.insforge` never upload. Deployment `18c0fab2` SUCCESS 23:14:51Z; `/health` unchanged (blaxel, stripe-sandbox, insforge-shared); home and back office serve the corner-store UI.
+- Manufact external server created by REST (`POST /api/v1/servers`, type external, bearer upstream auth), id `c9ef7d21-f8fd-4faa-a745-070e95d043c3`, slug `warm-spark-aqsz0`; proxy enabled. **Gateway URL: `https://warm-spark-aqsz0.run.mcp-use.com/mcp`.** Verified: initialize + `tools/list` through the gateway returns all eight tools.
+- **Gotcha:** the gateway forwards the client's `Authorization` header; it does not inject the stored upstream bearer for client traffic (that one is for Manufact's own Inspector/Testing). So clients still send the token:
+
+```bash
+claude mcp add --transport http bodega https://warm-spark-aqsz0.run.mcp-use.com/mcp \
+  --header "Authorization: Bearer $BODEGA_AGENT_TOKEN"
+```
+
+- Cloudflare in front of `api.manufact.com` rejects Python's default user agent (error 1010); use curl or set a UA.
+
 ### Open items
 - `/.well-known/mpp` returns 404 on Railway, so MPP payment discovery is not published. Fix only if the Stripe judge asks.
 - The branch is built on the official MCP SDK, not mcp-use. Manufact asked for mcp-use TypeScript; the answer on stage is "any server, connected and metered through Manufact," and the marketplace-mcp experiment (merged, hosted on Manufact as `dark-spark-ysobu`) is the mcp-use-built one.
