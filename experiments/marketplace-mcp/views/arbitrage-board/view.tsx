@@ -5,10 +5,10 @@
  * 3. Let me browse everything  → per-marketplace photo grid; any listing opens into photos + description via the item tool
  */
 import { ThemeProvider, useCallTool, useHostContext, useOpenExternal, useSendFollowUp, useToolContext } from "mcp-use/react";
-import { useMemo, useState } from "react";
+import { Component, useMemo, useState, type ReactNode } from "react";
 import "./view.css";
 
-type Src = { m: string; id: string; title: string; usd: number | null; cond: string | null; url: string; img?: string; size?: string; ship?: number | null; relevance?: number };
+type Src = { m: string; id: string; title: string; usd: number | null; cond: string | null; url: string; img?: string; size?: string; ship?: number | null; relevance?: number; sold?: boolean };
 const usd = (n: number | null | undefined) => (n == null ? "—" : `$${Math.round(n).toLocaleString("en-US")}`);
 const pc = (n: number | null | undefined) => (n == null ? null : Math.round(n * 100));
 const REASON: Record<string, string> = { read_description: "the title asks you to read the description", damage_or_wear: "wear or damage is mentioned", parts_or_incomplete: "it may be parts only or incomplete", replica_or_authenticity: "authenticity is in doubt", size_or_variant: "it may be a different size or variant", none: "nothing flagged" };
@@ -38,17 +38,25 @@ function PriceMap({ sources, refPrice }: { sources: Src[]; refPrice: number | nu
         <g key={m} transform={`translate(0 ${i * rowH + 14})`}>
           <text x={0} y={4} className="nb-map-label">{m}</text>
           <line x1={L} x2={W - R} y1={0} y2={0} className="nb-map-rail" />
-          {priced.filter((s) => s.m === m).map((s, j) => <circle key={s.id + j} cx={x(s.usd)} cy={0} r={3.5} className="nb-map-dot"><title>{`${usd(s.usd)} · ${s.title}`}</title></circle>)}
+          {priced.filter((s) => s.m === m).map((s, j) => <circle key={s.id + j} cx={x(s.usd)} cy={0} r={s.sold ? 3 : 3.5} className={s.sold ? "nb-map-sold" : "nb-map-dot"}><title>{`${s.sold ? "sold " : ""}${usd(s.usd)} · ${s.title}`}</title></circle>)}
         </g>
       ))}
-      {ref != null && ref >= lo && ref <= hi && (<g><line x1={x(ref)} x2={x(ref)} y1={4} y2={markets.length * rowH + 6} className="nb-map-ref" /><text x={x(ref)} y={markets.length * rowH + 20} textAnchor="middle" className="nb-map-reftext">typical {usd(ref)}</text></g>)}
+      {ref != null && ref >= lo && ref <= hi && (<g><line x1={x(ref)} x2={x(ref)} y1={4} y2={markets.length * rowH + 6} className="nb-map-ref" /><text x={x(ref)} y={markets.length * rowH + 20} textAnchor="middle" className="nb-map-reftext">sells for {usd(ref)}</text></g>)}
       <text x={L} y={markets.length * rowH + 20} className="nb-map-axis">{usd(lo)}</text>
       <text x={W - R} y={markets.length * rowH + 20} textAnchor="end" className="nb-map-axis">{usd(hi)}</text>
     </svg>
   );
 }
 
-export default function ArbitrageBoard() {
+class Boundary extends Component<{ children: ReactNode }, { err: string | null }> {
+  state = { err: null as string | null };
+  static getDerivedStateFromError(e: any) { return { err: String(e?.message ?? e) }; }
+  render() { return this.state.err ? <section className="nb"><p className="nb-eyebrow">BOARD ERROR</p><p className="nb-err">{this.state.err}</p></section> : this.props.children; }
+}
+
+export default function ArbitrageBoard() { return <Boundary><Board /></Boundary>; }
+
+function Board() {
   const view = useToolContext<"arbitrage">();
   const openExternal = useOpenExternal();
   const sendFollowUp = useSendFollowUp();
@@ -69,6 +77,7 @@ export default function ArbitrageBoard() {
   const d = view.toolOutput;
   const ref = d.opportunities[0]?.reference_usd ?? d.reference.sold_median_usd ?? null;
   const clean = d.opportunities.find((o) => verdict(o).tone === "ok");
+  const _unusedRef = ref;
   const markets = [...new Set(sources.map((s) => s.m))];
   const detail = (s: { m: string; id: string }) => {
     if (open !== `${s.m}:${s.id}`) return null;
@@ -90,13 +99,13 @@ export default function ArbitrageBoard() {
       <section className="nb">
         <p className="nb-eyebrow">ARBITRAGE · {markets.length || Object.keys(d.by_marketplace).length} MARKETPLACES <span className="nb-live">● LIVE</span></p>
         <h1 className="nb-h1">{d.query}</h1>
-        <p className="nb-lead">{ref != null ? <>Typically asks <b>{usd(ref)}</b>. </> : null}{clean ? <>Cheapest clean find: <b>{usd(clean.listing.usd)}</b> on {clean.listing.m}{clean.listing.cond ? ` (${clean.listing.cond})` : ""}.</> : d.opportunities.length ? <>Every cheaper listing has something to check.</> : <>Nothing meaningfully below the typical price.</>} <span className="nb-dim">{d.considered} listings, {d.kept_after_relevance} judged the right product.</span></p>
+        <p className="nb-lead">{d.reference.sold_comps > 0 ? <>Sells for about <b>{usd(d.reference.sold_median_usd)}</b> ({d.reference.sold_comps} sold on {(d.reference as any).sold_venues?.join(" and ") ?? "resale sites"}). </> : <>No sold listings found, so there is no reliable sell price. </>}{clean ? <>Best clean flip: buy at <b>{usd(clean.listing.usd)}</b> on {clean.listing.m}, about <b>{usd((clean as any).net_profit_usd)}</b> net after fees.</> : d.opportunities.length ? <>Every candidate has something to check first.</> : <>No listing clears a margin after fees.</>} <span className="nb-dim">{d.considered} live listings, {d.kept_after_relevance} judged the right product.</span></p>
 
         <PriceMap sources={sources} refPrice={ref} />
 
         <nav className="nb-tabs">
           <button className={tab === "deals" ? "on" : ""} onClick={() => setTab("deals")}>Deals <em>{d.opportunities.length}</em></button>
-          {markets.map((m) => <button key={m} className={tab === m ? "on" : ""} onClick={() => setTab(m)}>{m} <em>{sources.filter((s) => s.m === m).length}</em></button>)}
+          {markets.map((m) => <button key={m} className={tab === m ? "on" : ""} onClick={() => setTab(m)}>{m} <em>{sources.filter((s) => s.m === m && !s.sold).length}{sources.some((s) => s.m === m && s.sold) ? ` + ${sources.filter((s) => s.m === m && s.sold).length} sold` : ""}</em></button>)}
         </nav>
 
         {tab === "deals" && (
@@ -106,10 +115,11 @@ export default function ArbitrageBoard() {
                 <article key={l.id + i} className={`nb-card ${v.tone}`}>
                   <button className="nb-photo" onClick={() => expand(l)} aria-label="photos and details">{l.img ? <img src={l.img} alt="" loading="lazy" /> : <span>{l.m}</span>}</button>
                   <div className="nb-body">
-                    <div className="nb-pricerow"><span className="nb-price">{usd(l.usd)}</span><span className="nb-ref">vs {usd(o.reference_usd)} typical · {pc(o.spread_pct)}% below</span></div>
+                    <div className="nb-pricerow"><span className="nb-price">{usd(l.usd)}</span><span className="nb-ref">buy on {l.m}{l.ship ? ` + ${usd(l.ship)} shipping` : ""}</span></div>
+                    <p className="nb-profit"><span>sells for <b>{usd((o as any).sell_est_usd ?? o.reference_usd)}</b> on {(o as any).comps_venue ?? "resale"} ({(o as any).comps_n ?? 0} sold{(o as any).comps_tier && (o as any).comps_tier !== "any" ? `, ${String((o as any).comps_tier).replace("_", " ")}` : ""})</span><span>fees {pc((o as any).fee_pct ?? 0)}%</span><span className="net">net {usd((o as any).net_profit_usd)} · {pc((o as any).margin_pct)}% margin</span></p>
                     <a className="nb-title" href={l.url} onClick={go(l.url)}>{l.title}</a>
                     <p className={`nb-verdict ${v.tone}`}>{v.text}</p>
-                    <p className="nb-meta"><span className="nb-pill">{l.m}</span>{l.cond && <span>{l.cond}</span>}{l.size && <span>size {l.size}</span>}{l.ship != null && <span>+{usd(l.ship)} shipping</span>}{o.counterpart && <a href={o.counterpart.url} onClick={go(o.counterpart.url)}>compared with {o.counterpart.marketplace} {usd(o.counterpart.price_usd)}</a>}</p>
+                    <p className="nb-meta"><span className="nb-pill">{l.m}</span>{l.cond && <span>{l.cond}</span>}{l.size && <span>size {l.size}</span>}{l.ship != null && <span>+{usd(l.ship)} shipping</span>}{o.counterpart && <a href={o.counterpart.url} onClick={go(o.counterpart.url)}>photo compared with a {o.counterpart.marketplace} sale at {usd(o.counterpart.price_usd)}</a>}</p>
                     <p className="nb-actions"><button onClick={() => expand(l)}>{open === `${l.m}:${l.id}` ? "Hide" : "Photos & details"}</button><a href={l.url} onClick={go(l.url)}>Open listing ↗</a></p>
                     {detail(l)}
                   </div>
@@ -124,7 +134,7 @@ export default function ArbitrageBoard() {
             {sources.filter((s) => s.m === tab).map((s, i) => (
               <div key={s.id + i} className={`nb-tile${(s.relevance ?? 1) < 0.6 ? " faint" : ""}`}>
                 <button className="nb-photo" onClick={() => expand(s)} aria-label="photos and details">{s.img ? <img src={s.img} alt="" loading="lazy" /> : <span>{s.m}</span>}</button>
-                <div className="nb-tile-price">{usd(s.usd)}{s.size ? <em> · {s.size}</em> : null}</div>
+                <div className="nb-tile-price">{s.sold ? <em>sold </em> : null}{usd(s.usd)}{s.size ? <em> · {s.size}</em> : null}</div>
                 <a className="nb-tile-title" href={s.url} onClick={go(s.url)}>{s.title}</a>
                 {detail(s)}
               </div>
@@ -139,7 +149,7 @@ export default function ArbitrageBoard() {
             <button onClick={() => void sendFollowUp({ prompt: `Search "${d.query}" with sold=true to see what buyers actually paid, then revisit the deals.` })}>Sold prices</button>
           </p>
         )}
-        <p className="nb-foot"><span className="nb-eyebrow">TYPICAL PRICE</span>{d.reference.sold_median_usd != null ? `median of ${d.reference.sold_comps} sold listings` : "median ask on the other marketplaces"}.{d.errors.length > 0 && <> <span className="nb-eyebrow">SKIPPED</span>{d.errors.join(" · ")}</>}</p>
+        <p className="nb-foot"><span className="nb-eyebrow">HOW</span>sell price = median of sold listings in the same condition tier on the venue with the most sales; net = sell price minus that venue's seller fees, the buy price and inbound shipping. Only listings with at least 3 comps and a positive margin are shown.{d.errors.length > 0 && <> <span className="nb-eyebrow">SKIPPED</span>{d.errors.join(" · ")}</>}</p>
       </section>
     </ThemeProvider>
   );

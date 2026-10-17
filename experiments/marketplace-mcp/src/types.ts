@@ -49,3 +49,15 @@ export const money = (s: string | null | undefined): number | null => {
   const m = s.replace(/,/g, "").match(/(\d+(?:\.\d{1,2})?)/);
   return m ? Number(m[1]) : null;
 };
+
+export type Tier = "new" | "like_new" | "used" | "poor";
+/** Normalize marketplace condition wording into four tiers so comps compare like with like. */
+export const tier = (cond: string | null | undefined, title = ""): Tier => {
+  const t = `${cond ?? ""} ${title}`.toLowerCase();
+  if (/parts|as.?is|for repair|damaged|worn|heavy wear|satisfactory|fair\b|poor|read desc/.test(t)) return "poor";
+  if (/brand new|new with tags|nwt|new without tags|nwot|\bnew\b|unworn|deadstock|\bds\b|sealed/.test(t)) return "new";
+  if (/like new|gently used|excellent|very good|mint|barely/.test(t)) return "like_new";
+  return "used";
+};
+/** Seller-side fee share when reselling on a venue (platform + payment), 2026 public rates, approximate. */
+export const FEES: Record<string, number> = { poshmark: 0.2, mercari: 0.13, ebay: 0.136, grailed: 0.12, vinted: 0.0, amazon: 0.15, depop: 0.13 };

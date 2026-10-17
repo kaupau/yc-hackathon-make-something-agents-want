@@ -8,14 +8,16 @@ import type { Adapter, Listing, SearchOptions } from "../types.js";
  * the page's repeated item-link prefix, aligned by order.
  * Verified on Poshmark, Mercari and Vinted (2026-10-17).
  */
-export interface GenericConfig { name: string; template: string; item_prefix: string; origin: string; added_at: string; sample_count: number }
+export interface GenericConfig { name: string; template: string; item_prefix: string; origin: string; added_at: string; sample_count: number; sold_template?: string }
 
 const PRICE_LINE = /^\$\s?\d[\d,]*(?:\.\d\d)?(?:\s*\$\s?\d[\d,]*(?:\.\d\d)?)?$/;
-const SIZE_LINE = /^(?:(?:XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,2}(?:\.\d)?|One Size|Various sizes|OS)(?:\s*\/\s*US\s*[\d\-]+)?(?:\s*·\s*.+)?|US \d+)$/i;
+const SIZE_LINE = /^(?:Size:?\s*)?(?:(?:XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,2}(?:\.\d)?[A-Z]?|One Size|Various sizes|OS)(?:\s*\/\s*US\s*[\d\-]+)?(?:\s*·\s*.+)?|US \d+)$/i;
+const NUMBER_LINE = /^\d{1,4}$/;
 const BADGE_LINE = /^(?:SOLD|Bumped|NEW|Sponsored|Ad|Free shipping|\d{1,2}%|\d+ (?:likes?|watchers?))$/i;
+const SOLD_LINE = /^sold$/i;
 const CONDITION_WORDS = /(new with tags|new without tags|nwt|nwot|like new|very good|good|fair|satisfactory|pre-owned|used|gently used|brand new|new)/i;
 
-export function parseListings(text: string, links: string[], itemPrefix: string, marketplace: string): Listing[] {
+export function parseListings(text: string, links: string[], itemPrefix: string, marketplace: string, soldPage = false): Listing[] {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   const itemLinks = [...new Set(links.filter((l) => l.includes(itemPrefix)))];
   const out: Listing[] = [];
@@ -24,21 +26,22 @@ export function parseListings(text: string, links: string[], itemPrefix: string,
     if (PRICE_LINE.test(line.replace(/\s+/g, ""))) {
       const prices = [...line.matchAll(/\$\s?([\d,]+(?:\.\d\d)?)/g)].map((m) => Number(m[1].replace(/,/g, "")));
       let title: string | null = null, size: string | null = null, condition: string | null = null;
+      const sold = soldPage || block.some((b) => SOLD_LINE.test(b));
       for (let i = block.length - 1; i >= 0; i--) {
         const b = block[i];
-        if (BADGE_LINE.test(b)) continue;
-        if (SIZE_LINE.test(b)) { size ??= b.split("·")[0].trim(); const c = b.match(CONDITION_WORDS); if (c) condition ??= c[1].toLowerCase(); continue; }
+        if (BADGE_LINE.test(b) || NUMBER_LINE.test(b)) continue;
+        if (SIZE_LINE.test(b) && !/^\d{1,2}$/.test(b)) { size ??= b.replace(/^Size:?\s*/i, "").split("·")[0].trim(); const c = b.match(CONDITION_WORDS); if (c) condition ??= c[1].toLowerCase(); continue; }
         if (b.length < 3) continue;
         title = b; break;
       }
       if (title) {
         const idx = out.length; const url = itemLinks[idx] ?? "";
-        out.push({ marketplace, id: url ? url.split("?")[0].split("/").filter(Boolean).pop() ?? String(idx) : String(idx), title, price_usd: prices[0] ?? null, condition: condition ?? (title.match(CONDITION_WORDS)?.[1].toLowerCase() ?? null), url, image: null, size });
+        out.push({ marketplace, id: url ? url.split("?")[0].split("/").filter(Boolean).pop() ?? String(idx) : String(idx), title, price_usd: prices[0] ?? null, condition: condition ?? (title.match(CONDITION_WORDS)?.[1].toLowerCase() ?? null), url, image: null, size, sold, sold_price_usd: sold ? prices[0] ?? null : null });
       }
       block = [];
     } else block.push(line);
-    // size/condition can trail the price (Poshmark); attach to the previous listing
-    if (out.length && block.length === 1 && SIZE_LINE.test(block[0]) && !out[out.length - 1].size) { out[out.length - 1].size = block[0].split("·")[0].trim(); block = []; }
+    // size can trail the price (Poshmark: "$270 | $575 | Size: XL"); attach to the previous listing
+    if (out.length && block.length >= 1 && SIZE_LINE.test(block[block.length - 1]) && !/^\d{1,2}$/.test(block[block.length - 1]) && !out[out.length - 1].size) { out[out.length - 1].size = block[block.length - 1].replace(/^Size:?\s*/i, "").split("·")[0].trim(); block = []; }
   }
   return out.filter((l) => l.price_usd !== null);
 }
@@ -61,10 +64,12 @@ export function makeGenericAdapter(cfg: GenericConfig): Adapter {
     name: cfg.name,
     via: `generic adapter (TinyFish render of ${cfg.template}); URLs aligned by order`,
     async search(query: string, opts: SearchOptions = {}) {
-      const url = cfg.template.replace("{q}", encodeURIComponent(query));
-      const r = await tinyfishFetch([url], { format: "markdown", links: true, purpose: "read product listings for price comparison" });
+      const tpl = opts.sold ? cfg.sold_template : cfg.template;
+      if (!tpl) throw new Error(`${cfg.name}: no sold listings view`);
+      const url = tpl.replace("{q}", encodeURIComponent(query));
+      const r = await tinyfishFetch([url], { format: "markdown", links: true, purpose: opts.sold ? "sold listings for price comps" : "read product listings for price comparison" });
       if (r.errors.length) throw new Error(`${cfg.name}: ${r.errors[0].error}`);
-      return parseListings(r.results[0].text, r.results[0].links ?? [], cfg.item_prefix, cfg.name).slice(0, opts.limit ?? 20);
+      return parseListings(r.results[0].text, r.results[0].links ?? [], cfg.item_prefix, cfg.name, !!opts.sold).slice(0, opts.limit ?? 20);
     },
   };
 }

@@ -12,10 +12,10 @@ const compact = (l: Listing) => ({ m: l.marketplace, id: l.id, title: l.title.sl
 const compactSchema = z.object({ m: z.string(), id: z.string(), title: z.string(), usd: z.number().nullable(), cond: z.string().nullable(), url: z.string(), img: z.string().optional(), size: z.string().optional(), rating: z.number().nullable().optional(), reviews: z.number().nullable().optional(), sold: z.boolean().optional(), ship: z.number().nullable().optional() });
 const arbitrageOutput = z.object({
   query: z.string(),
-  reference: z.object({ sold_comps: z.number(), sold_median_usd: z.number().nullable() }),
-  by_marketplace: z.record(z.string(), z.object({ n: z.number(), min: z.number().nullable(), median: z.number().nullable() })),
+  reference: z.object({ sold_comps: z.number(), sold_median_usd: z.number().nullable(), sold_venues: z.array(z.string()).optional() }),
+  by_marketplace: z.record(z.string(), z.object({ n: z.number(), min: z.number().nullable(), median: z.number().nullable(), sold_n: z.number().optional(), sold_median: z.number().nullable().optional() })),
   considered: z.number(), kept_after_relevance: z.number(),
-  opportunities: z.array(z.object({ listing: compactSchema, reference_usd: z.number(), reference_from: z.string(), spread_usd: z.number(), spread_pct: z.number(), relevance: z.number(), counterpart: z.object({ marketplace: z.string(), url: z.string(), price_usd: z.number().nullable() }).optional(), photo_match: z.number().nullable().optional(), catch_risk: z.number().optional(), catch_reason: z.string().optional(), replica_risk: z.number().optional(), suspected_replica: z.boolean().optional() })),
+  opportunities: z.array(z.object({ listing: compactSchema, tier: z.string().optional(), buy_usd: z.number().optional(), ship_usd: z.number().optional(), sell_est_usd: z.number().optional(), comps_n: z.number().optional(), comps_venue: z.string().optional(), comps_tier: z.string().optional(), fee_pct: z.number().optional(), net_profit_usd: z.number().optional(), margin_pct: z.number().optional(), reference_usd: z.number(), reference_from: z.string(), spread_usd: z.number(), spread_pct: z.number(), relevance: z.number(), counterpart: z.object({ marketplace: z.string(), url: z.string(), price_usd: z.number().nullable() }).optional(), photo_match: z.number().nullable().optional(), catch_risk: z.number().optional(), catch_reason: z.string().optional(), replica_risk: z.number().optional(), suspected_replica: z.boolean().optional() })),
   errors: z.array(z.string()),
   sources: z.array(compactSchema.extend({ relevance: z.number().optional() })).optional(),
 });
@@ -59,22 +59,22 @@ export const itemTool = server.tool({
 
 export const arbitrageTool = server.tool({
   name: "arbitrage",
-  description: "Find a product listed well below what it sells for elsewhere. Searches every marketplace, uses eBay SOLD comps as the reference price when eBay serves them (else the median live ask on the other marketplaces, stated in reference_from), drops listings that are not the product itself, and returns the biggest spreads with evidence per listing: relevance, photo_match, catch_risk + catch_reason, and replica_risk. Listings marked suspected_replica are likely counterfeits: never recommend them, say why. Slow: 15-40 s.",
-  inputSchema: z.object({ query: z.string().min(2), limit: z.number().int().min(1).max(10).default(5), min_spread_pct: z.number().min(0).max(0.9).default(0.25) }),
+  description: "Find resale flips: live listings you can buy on one marketplace and resell on another for a net profit after fees and shipping. Sell price = median of SOLD listings (Poshmark, Mercari) in the same condition tier; only candidates with >= min_comps sold comps, net >= min_net_usd and margin >= min_spread_pct are returned, ranked by net profit, each with evidence: relevance, photo_match against a real sale, catch_risk + catch_reason, replica_risk. Listings marked suspected_replica are likely counterfeits: never recommend them, say why. Renders a board. 20-50 s.",
+  inputSchema: z.object({ query: z.string().min(2), limit: z.number().int().min(1).max(10).default(5), min_spread_pct: z.number().min(0).max(0.9).default(0.2).describe("minimum margin after fees, as a fraction of cost"), min_net_usd: z.number().min(0).default(25), min_comps: z.number().int().min(1).default(3) }),
   outputSchema: arbitrageOutput,
   view: { name: "arbitrage-board", description: "Cross-marketplace spreads with photo, relevance and catch-risk evidence", prefersBorder: false, csp: { resourceDomains: ["https://i.ebayimg.com", "https://m.media-amazon.com", "https://media-assets.grailed.com"] } },
   annotations: { readOnlyHint: true, openWorldHint: true },
-}, async ({ query, limit, min_spread_pct }) => {
-  const r = await arbitrage(query, { limit, min_spread_pct });
+}, async ({ query, limit, min_spread_pct, min_net_usd, min_comps }) => {
+  const r = await arbitrage(query, { limit, min_spread_pct, min_net_usd, min_comps });
   // sources ride in structuredContent (the View's data channel); _meta is reserved for host UI metadata and broke rendering
   const out = { ...r, opportunities: r.opportunities.map((o) => ({ ...o, listing: compact(o.listing) })), sources: r.sources.slice(0, 120).map((l) => ({ ...compact(l), relevance: (l as any).relevance })) };
   const reps = out.opportunities.filter((o) => o.suspected_replica);
   const top = out.opportunities.find((o) => !o.suspected_replica) ?? out.opportunities[0];
   const replicaNote = reps.length ? ` WARNING: ${reps.length} of the cheapest listings look like replicas or counterfeits (${reps.map((o) => `${o.listing.m} $${o.listing.usd}`).join(", ")}); do not recommend or buy those, say why, and prefer the genuine finds.` : "";
   const summary = (top
-    ? `${out.opportunities.length} opportunities for "${query}"; best genuine-looking: ${top.listing.m} $${top.listing.usd} vs $${top.reference_usd} (${Math.round(top.spread_pct * 100)}% below, catch_risk ${top.catch_risk ?? "n/a"}, photo_match ${top.photo_match ?? "n/a"}, replica_risk ${top.replica_risk ?? "n/a"}). ${out.considered} listings across ${Object.keys(out.by_marketplace).length} marketplaces, ${out.kept_after_relevance} judged relevant.`
-    : `No listing for "${query}" is ${Math.round(min_spread_pct * 100)}% below its reference; ${out.considered} listings seen.`) + replicaNote;
-  return { content: [{ type: "text" as const, text: summary + " " + JSON.stringify(out.opportunities.map((o) => ({ m: o.listing.m, usd: o.listing.usd, spread: o.spread_usd, catch: o.catch_risk, why: o.catch_reason, replica: o.replica_risk, suspected_replica: o.suspected_replica || undefined, url: o.listing.url }))) }], structuredContent: out as any };
+    ? `${out.opportunities.length} flips for "${query}". Best genuine-looking: buy ${top.listing.m} $${top.listing.usd} (${top.tier}), sells ~$${top.sell_est_usd} on ${top.comps_venue} (${top.comps_n} sold), net ~$${top.net_profit_usd} after ${Math.round((top.fee_pct ?? 0) * 100)}% fees (${Math.round((top.margin_pct ?? 0) * 100)}% margin; catch_risk ${top.catch_risk ?? "n/a"}, photo_match ${top.photo_match ?? "n/a"}, replica_risk ${top.replica_risk ?? "n/a"}). Sell side: ${out.reference.sold_comps} sold listings on ${(out.reference.sold_venues ?? []).join("+") || "none"}. ${out.considered} live listings, ${out.kept_after_relevance} relevant.`
+    : `No flip for "${query}" clears $${min_net_usd} and ${Math.round(min_spread_pct * 100)}% after fees with ≥${min_comps} sold comps; ${out.considered} live listings and ${out.reference.sold_comps} sold comps seen.`) + replicaNote;
+  return { content: [{ type: "text" as const, text: summary + " " + JSON.stringify(out.opportunities.map((o) => ({ m: o.listing.m, buy: o.listing.usd, sells: o.sell_est_usd, on: o.comps_venue, comps: o.comps_n, net: o.net_profit_usd, margin: o.margin_pct, catch: o.catch_risk, why: o.catch_reason, replica: o.replica_risk, suspected_replica: o.suspected_replica || undefined, url: o.listing.url }))) }], structuredContent: out as any };
 });
 
 server.tool({
