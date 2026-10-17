@@ -11,7 +11,8 @@
     "start": "node --env-file-if-exists=.env dist/main.js",
     "build": "tsc",
     "test": "tsx --test src/**/*.test.ts",
-    "approvals": "node --env-file-if-exists=.env --import tsx scripts/approvals.ts"
+    "approvals": "node --env-file-if-exists=.env --import tsx scripts/approvals.ts",
+    "customers": "node --env-file-if-exists=.env --import tsx scripts/customers.ts"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

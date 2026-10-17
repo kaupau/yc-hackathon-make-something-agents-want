@@ -23,6 +23,17 @@ A simple demo prompt:
 
 In simulation this returns explicit simulated results and no real-provider recommendation. Real email checks require provider credentials and a Blaxel-reachable proxy; a failing provider is not silently simulated.
 
+## Customers and agent credentials
+
+Each customer is provisioned by the administrator with an ID, approver email, budget cap and approval threshold (integer cents). Bodega issues a random 256-bit agent bearer token (`bdg_agt_…`) **once**; only its SHA-256 digest is stored. Each customer gets its own durable wallet (`customer:<id>`); MCP sessions, purchases, trials and `/mpp` payments are bound to the authenticated customer. Budgets come only from the administrator record, never from tools, and reconnects or restarts never replenish them. Agent tokens cannot approve purchases or use admin endpoints; approvals still use the separate one-use approval link.
+
+- Operator console: open `/admin/customers/console`, paste the administrator token (kept in page memory only), create a customer, and copy the one-time MCP configuration to that customer's agent.
+- CLI: `npm run customers -- create --email human@example.com --cap 1000 --threshold 100 [--id acme]`, plus `list`, `rotate <id>`, `issue <id>`, `revoke <credential-id>`, `disable|enable <id>`.
+- API (Bearer administrator token): `POST /admin/customers`, `GET /admin/customers` (metadata only, never tokens/hashes), `POST /admin/customers/:id/credentials` (`{"revoke_existing":true}` rotates), `POST /admin/credentials/:id/revoke`, `POST /admin/customers/:id/active`.
+- Agents send `Authorization: Bearer <token>` to `/mcp` and `X-Bodega-Agent-Token: <token>` to `/mpp/:purchase_id`.
+
+`BODEGA_IDENTITY_BACKEND=sqlite` (default, `.bodega/identity.sqlite`) or `insforge` (server-only RPC functions from `../migrations/20261017210002_customer-identities.sql`, requires `INSFORGE_URL`/`INSFORGE_API_KEY`). The legacy `BODEGA_AGENT_TOKEN` still works but only for the legacy `BODEGA_WALLET_ID` wallet. Without any legacy token, local loopback demos keep anonymous access to the legacy wallet unless `BODEGA_REQUIRE_AGENT_AUTH=1` (implied by the InsForge backend); a malformed or revoked credential never falls back to anonymous access.
+
 ## Payments and approvals
 
 `BODEGA_PAYMENTS=mock` produces deterministic, explicitly simulated receipts. `stripe-cli` uses the existing local Stripe CLI login and a simulated `pm_card_visa` card on the **Bodega Development sandbox only** (`acct_1URdmN2M1S84n0j8`). No API key is extracted. It creates real sandbox PaymentIntent records, not live charges. The SDK mode `stripe` requires a server-only test key. Other Stripe accounts and live keys are refused.
