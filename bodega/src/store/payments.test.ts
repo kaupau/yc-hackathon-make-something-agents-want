@@ -12,7 +12,7 @@ function stub() {
   const client: StripePaymentClient = {
     accounts: { async retrieve() { return { id: account }; } },
     paymentIntents: {
-      async create(params, opts) { created++; createParams = params; idempotencyKey = opts.idempotencyKey; if (createError) throw createError; snapshot.metadata = params.metadata as Record<string, string>; return { ...snapshot }; },
+      async create(params, opts) { created++; createParams = params; idempotencyKey = opts.idempotencyKey; if (createError) throw createError; snapshot.metadata = params.metadata as Record<string, string>; snapshot.transfer_data = params.transfer_data ? { destination: params.transfer_data.destination, ...params.transfer_data.amount === undefined ? {} : { amount: params.transfer_data.amount } } : null; snapshot.application_fee_amount = params.application_fee_amount ?? null; return { ...snapshot }; },
       async retrieve() { retrieved++; if (retrieveError) throw retrieveError; return { ...snapshot }; },
     },
     webhooks: { constructEvent: (raw, signature, secret) => Stripe.webhooks.constructEvent(raw, signature, secret) },
@@ -42,6 +42,20 @@ test('live keys, other accounts and amounts below 50 cents cannot create payment
   const s = stub(); s.account = 'acct_other'; assert.equal((await s.provider.charge(order)).status, 'pending'); assert.equal(s.created, 0);
   await assert.rejects(s.provider.charge({ ...order, amountCents: 49 }), /minimum/);
   await assert.rejects(s.provider.charge({ ...order, amountCents: 200.5 }), /integer/);
+});
+
+test('destination receipts must transfer the full agreed amount to the bound seller with zero fee', async () => {
+  const s=stub(); const marketplaceOrder={...order,sellerAccountId:'acct_sellerFixture',platformFeeCents:0};
+  assert.equal((await s.provider.charge(marketplaceOrder)).status,'paid');
+  assert.deepEqual(s.params?.transfer_data,{destination:'acct_sellerFixture'});
+  assert.equal(s.params?.application_fee_amount,undefined);
+  s.snapshot={...s.snapshot,transfer_data:{destination:'acct_attacker'}};
+  assert.equal((await s.provider.inspect(marketplaceOrder,'pi_fixture123')).status,'pending');
+  s.snapshot={...s.snapshot,transfer_data:{destination:'acct_sellerFixture',amount:100}};
+  assert.equal((await s.provider.inspect(marketplaceOrder,'pi_fixture123')).status,'pending');
+  s.snapshot={...s.snapshot,transfer_data:{destination:'acct_sellerFixture'},application_fee_amount:20};
+  assert.equal((await s.provider.inspect(marketplaceOrder,'pi_fixture123')).status,'pending');
+  await assert.rejects(s.provider.charge({...marketplaceOrder,platformFeeCents:20}),/zero marketplace fee/);
 });
 
 test('false receipts, wrong mode, amount, currency or purchase binding never unlock tools', async () => {

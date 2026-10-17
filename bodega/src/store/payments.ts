@@ -5,13 +5,15 @@ import Stripe from 'stripe';
 
 export const BODEGA_SANDBOX_ACCOUNT = 'acct_1URdmN2M1S84n0j8';
 export interface PaymentOrder {
-  id: string; sessionId: string; listingId: string; amountCents: number; currency: 'usd'; idempotencyKey: string; paymentMode?: 'mpp';
+  id: string; sessionId: string; listingId: string; amountCents: number; currency: 'usd'; idempotencyKey: string; paymentMode?: 'mpp'; sellerAccountId?: string; platformFeeCents?: number;
 }
 export interface PaymentResult {
   status: 'paid' | 'pending' | 'declined'; paymentIntentId?: string; error?: string;
 }
 export interface PaymentProvider {
   readonly mode: 'mock' | 'stripe';
+  /** Freeze server-selected seller settlement before issuing a payment challenge. */
+  prepare?(order: PaymentOrder): Promise<PaymentOrder>;
   charge(order: PaymentOrder): Promise<PaymentResult>;
   inspect(order: PaymentOrder, paymentIntentId: string): Promise<PaymentResult>;
   /** Verified notification only; caller must deduplicate event IDs and independently inspect current PI state. */
@@ -19,6 +21,8 @@ export interface PaymentProvider {
 }
 export interface StripeIntentSnapshot {
   id: string; status: string; livemode: boolean; amount: number; amount_received: number; currency: string; metadata: Record<string, string>;
+  transfer_data?: { destination: string | { id: string }; amount?: number } | null;
+  application_fee_amount?: number | null;
 }
 export interface StripePaymentClient {
   accounts: { retrieve(id: null): Promise<{ id: string; deleted?: boolean | void }> };
@@ -35,8 +39,17 @@ function validateOrder(order: PaymentOrder): void {
   if (!Number.isSafeInteger(order.amountCents) || order.amountCents < 50 || order.currency !== 'usd') throw new Error('Payment requires integer USD cents with a 50-cent minimum');
   for (const value of [order.id, order.sessionId, order.listingId]) if (!value || value.length > 200) throw new Error('Invalid payment order binding');
   if (!order.idempotencyKey || order.idempotencyKey.length > 255) throw new Error('A stable idempotency key is required');
+  settlementParams(order);
 }
-export const paymentBinding = (order: PaymentOrder) => ({ purchase_id: order.id, session_id: order.sessionId, listing_id: order.listingId, bodega_account_id: BODEGA_SANDBOX_ACCOUNT, bodega_payment_mode: order.paymentMode??'sandbox-test-card-fallback', bodega_attempt_hash: createHash('sha256').update(order.idempotencyKey).digest('hex') });
+export function settlementParams(order: PaymentOrder): Pick<Stripe.PaymentIntentCreateParams, 'transfer_data' | 'application_fee_amount'> {
+  if (!order.sellerAccountId) {
+    if (order.platformFeeCents !== undefined) throw new Error('Seller required for marketplace fees');
+    return {};
+  }
+  if (!/^acct_[A-Za-z0-9]+$/.test(order.sellerAccountId) || order.sellerAccountId === BODEGA_SANDBOX_ACCOUNT || order.platformFeeCents !== 0) throw new Error('Bodega requires a connected seller and the agreed zero marketplace fee');
+  return { transfer_data: { destination: order.sellerAccountId } };
+}
+export const paymentBinding = (order: PaymentOrder) => ({ purchase_id: order.id, session_id: order.sessionId, listing_id: order.listingId, bodega_account_id: BODEGA_SANDBOX_ACCOUNT, bodega_payment_mode: order.paymentMode??'sandbox-test-card-fallback', bodega_attempt_hash: createHash('sha256').update(order.idempotencyKey).digest('hex'), ...(order.sellerAccountId ? { bodega_seller_account: order.sellerAccountId, bodega_platform_fee_cents: String(order.platformFeeCents) } : {}) });
 const fingerprint = (order: PaymentOrder) => createHash('sha256').update(JSON.stringify(order)).digest('hex');
 
 export function createMockPayments(options: { behavior?: 'paid' | 'pending' | 'declined' | ((order: PaymentOrder) => PaymentResult['status']) } = {}): PaymentProvider {
@@ -80,7 +93,9 @@ function buildStripeProvider(stripe: StripePaymentClient, options: { webhookSecr
   }
   function verifyReceipt(order: PaymentOrder, intent: StripeIntentSnapshot, expectedId: string): PaymentResult {
     const failedBinding = intent.id !== expectedId || !/^pi_[A-Za-z0-9]+$/.test(intent.id) || intent.livemode !== false || intent.amount !== order.amountCents || intent.currency !== order.currency || Object.entries(paymentBinding(order)).some(([key, value]) => intent.metadata?.[key] !== value);
-    if (failedBinding) return { status: 'pending', paymentIntentId: expectedId, error: 'Receipt verification failed; purchase remains blocked' };
+    const destination = typeof intent.transfer_data?.destination === 'string' ? intent.transfer_data.destination : intent.transfer_data?.destination?.id;
+    const settlementMismatch = order.sellerAccountId ? destination !== order.sellerAccountId || (intent.application_fee_amount ?? 0) !== order.platformFeeCents || (intent.transfer_data?.amount !== undefined && intent.transfer_data.amount !== order.amountCents) : !!destination || !!intent.application_fee_amount;
+    if (failedBinding || settlementMismatch) return { status: 'pending', paymentIntentId: expectedId, error: 'Receipt verification failed; purchase remains blocked' };
     if (intent.status === 'succeeded') {
       if (intent.amount_received !== order.amountCents) return { status: 'pending', paymentIntentId: intent.id, error: 'Receipt amount received does not match order' };
       return { status: 'paid', paymentIntentId: intent.id };
@@ -103,7 +118,7 @@ function buildStripeProvider(stripe: StripePaymentClient, options: { webhookSecr
       let intentId: string | undefined;
       try {
         await verifyAccount();
-        const intent = await stripe.paymentIntents.create({ amount: order.amountCents, currency: order.currency, confirm: true, payment_method: 'pm_card_visa', automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, metadata: paymentBinding(order), description: 'Bodega sandbox test-card fallback (simulated card; no human funds)' }, { idempotencyKey: order.idempotencyKey });
+        const intent = await stripe.paymentIntents.create({ amount: order.amountCents, currency: order.currency, confirm: true, payment_method: 'pm_card_visa', automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, ...settlementParams(order), metadata: paymentBinding(order), description: 'Bodega sandbox test-card fallback (simulated card; no human funds)' }, { idempotencyKey: order.idempotencyKey });
         intentId = intent.id;
         // The create response is never itself a receipt gate.
         return await inspect(order, intentId);
@@ -167,6 +182,7 @@ export function createStripeCliPayments(options: StripeCliPaymentsOptions): Paym
         await identity();
         const args = ['post', '/v1/payment_intents', '--confirm', '--idempotency', requestOptions.idempotencyKey!, '-d', `amount=${params.amount}`, '-d', `currency=${params.currency}`, '-d', 'confirm=true', '-d', 'payment_method=pm_card_visa', '-d', 'automatic_payment_methods[enabled]=true', '-d', 'automatic_payment_methods[allow_redirects]=never', '-d', `description=${params.description}`];
         for (const [key, value] of Object.entries(params.metadata ?? {})) args.push('-d', `metadata[${key}]=${value}`);
+        if (params.transfer_data?.destination) args.push('-d', `transfer_data[destination]=${params.transfer_data.destination}`);
         const result = await decode(args);
         return result as unknown as StripeIntentSnapshot;
       },
