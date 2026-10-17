@@ -69,6 +69,24 @@ Headless Claude Code against the hosted URL (`.cache/mcp-cloud.json`): `arbitrag
 
 Deploy gotchas: `--env-file` must be project-relative (a gitignored `.env.deploy`, removed after); the manual deployment id the CLI prints is superseded by a webhook-triggered one on the managed repo, so read `deployments list` for the live id; `deployments logs/get` need the full UUID; the first deploy writes `.mcp-use/cloud/link.json` (gitignored).
 
+## Market sweep: where the spreads are real (2026-10-17 16:40 PT)
+Seven product markets through `arbitrage()`, limit 5, min spread 20%, from the laptop:
+
+| Market | Listings / kept | Top spread | What it really was |
+|---|---|---|---|
+| Sony a7 III body | 66 / 23 | eBay $475 vs $1,116 ref (−56%), photo 0.88, catch 0.54 | plausible: used body vs new Amazon/Mercari asks; the third row has catch 0.99 (parts/"as is") |
+| Nike Dunk Low Panda | 94 / 54 | Mercari $12 vs $65 (−82%) | kids size 4.5Y vs adult median: a size mismatch, not arbitrage |
+| LEGO 75192 Falcon | 53 / 7 | Mercari $256 vs $850 (−70%), catch 0.79 | "Read Description" listing, correctly flagged; $450 built set vs $850 new is the honest gap |
+| Patagonia Nano Puff | 91 / 43 | eBay $5 vs $90 (−94%) | girls' and kids' jackets vs adult Grailed median; one at catch 0.96 |
+| YETI Tundra 45 | 57 / 19 | Amazon $325 vs Mercari median $512 (−37%), catch 0.04 | reverse: new retail is cheaper than the resale asks |
+| Seiko SKX007 | 59 / 3 | Grailed $320 vs $425 (−25%) | thin market, two listings |
+| AirPods Pro 2 | 34 / 4 | none | eBay bot-walled, Mercari timed out, Amazon only |
+
+Findings: (1) **eBay's bot wall hit 4 of 7 queries** through TinyFish (fresh query strings have no cached render); eBay is the best source when it answers and the least reliable. (2) Most big spreads are **used-vs-new or size/condition mismatches**, not true arbitrage; the catch check catches the "read description" and parts listings, but size (kids vs adult) and condition-matched references are the next filter to add. (3) Jev's relevance filter does real work (AirPods: 34 → 4, Seiko: 59 → 3). (4) Resale markets can be above retail (YETI), which is its own signal.
+
+## Board View (MCP App) — 16:50 PT
+`arbitrage` is bound to `views/arbitrage-board/view.tsx` (mcp-use MCP Apps: `outputSchema` + `view: { name }`, React, `useToolContext`, `useOpenExternal`). It renders inside Claude, ChatGPT and the mcp-use Inspector: header with counts and the reference used, a per-marketplace strip (n, min, median), then one row per opportunity with the listing photo, title (opens via the host), marketplace, condition, size, shipping, the counterpart it was compared to, a spread bar, price vs reference, and the three Jev badges (relevance, photo match, catch risk) coloured by risk. Light and dark follow the host theme. Entry is now `index.ts` (CLI-managed, `npm run dev` = `mcp-use dev`, Inspector at `/mcp/inspector`); `src/standalone.ts` keeps the plain tsx path for the laptop. Verified in the Inspector on the Arc'teryx query; screenshots shared in the session.
+
 ## Tools (mcp-use `MCPServer`, Streamable HTTP on `:3777/mcp`)
 - `marketplaces()` – what is searchable and via which path (agents should know the freshness of each)
 - `search(query, marketplaces?, limit, sold)` – normalized compact listings per marketplace

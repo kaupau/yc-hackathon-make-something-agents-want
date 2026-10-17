@@ -1,18 +1,27 @@
 import { MCPServer } from "mcp-use";
 import { z } from "zod";
-import { adapters, marketplaces } from "./adapters/index.js";
-import { arbitrage } from "./arbitrage.js";
-import { discover } from "./adapters/generic.js";
-import { jevAvailable } from "./jev.js";
-import { loadRegistry, register } from "./registry.js";
-import type { Listing } from "./types.js";
+import { adapters, marketplaces } from "./src/adapters/index.js";
+import { arbitrage } from "./src/arbitrage.js";
+import { discover } from "./src/adapters/generic.js";
+import { jevAvailable } from "./src/jev.js";
+import { loadRegistry, register } from "./src/registry.js";
+import type { Listing } from "./src/types.js";
 
 /** Token-light listing for tool results: agents pay per token, so no raw payloads. */
 const compact = (l: Listing) => ({ m: l.marketplace, id: l.id, title: l.title.slice(0, 90), usd: l.price_usd, cond: l.condition, url: l.url, ...(l.image ? { img: l.image } : {}), ...(l.size ? { size: l.size } : {}), ...(l.rating != null ? { rating: l.rating, reviews: l.review_count } : {}), ...(l.sold ? { sold: true } : {}), ...(l.shipping_usd != null ? { ship: l.shipping_usd } : {}) });
+const compactSchema = z.object({ m: z.string(), id: z.string(), title: z.string(), usd: z.number().nullable(), cond: z.string().nullable(), url: z.string(), img: z.string().optional(), size: z.string().optional(), rating: z.number().nullable().optional(), reviews: z.number().nullable().optional(), sold: z.boolean().optional(), ship: z.number().nullable().optional() });
+const arbitrageOutput = z.object({
+  query: z.string(),
+  reference: z.object({ sold_comps: z.number(), sold_median_usd: z.number().nullable() }),
+  by_marketplace: z.record(z.string(), z.object({ n: z.number(), min: z.number().nullable(), median: z.number().nullable() })),
+  considered: z.number(), kept_after_relevance: z.number(),
+  opportunities: z.array(z.object({ listing: compactSchema, reference_usd: z.number(), reference_from: z.string(), spread_usd: z.number(), spread_pct: z.number(), relevance: z.number(), counterpart: z.object({ marketplace: z.string(), url: z.string(), price_usd: z.number().nullable() }).optional(), photo_match: z.number().nullable().optional(), catch_risk: z.number().optional() })),
+  errors: z.array(z.string()),
+});
 const text = (o: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(o) }], structuredContent: o as any });
 
 loadRegistry();
-const server = new MCPServer({ name: "marketplace-mcp", version: "0.2.0" });
+const server = new MCPServer({ name: "marketplace-mcp", title: "Marketplace", version: "0.3.0", description: "Search, compare and spot arbitrage across eBay, Grailed, Amazon and any server-rendered marketplace", instructions: "Use search for listings, item for details, arbitrage for cross-marketplace spreads (renders a board), add_marketplace to onboard a new site from its URL." });
 
 server.tool({
   name: "marketplaces",
@@ -44,14 +53,19 @@ server.tool({
   return text({ listing: compact(d.listing), description: d.description ?? null, reviews: (d.reviews ?? []).slice(0, 6).map((r) => ({ rating: r.rating, title: r.title, body: r.body.slice(0, 300), date: r.date })) });
 });
 
-server.tool({
+export const arbitrageTool = server.tool({
   name: "arbitrage",
   description: "Find a product listed well below what it sells for elsewhere. Searches every marketplace, uses eBay SOLD comps as the reference price when eBay serves them (else the median live ask on the other marketplaces, stated in reference_from), drops listings that are not the product itself (Jev judgment), and returns the biggest spreads with evidence. Slow: 15-40 s.",
   inputSchema: z.object({ query: z.string().min(2), limit: z.number().int().min(1).max(10).default(5), min_spread_pct: z.number().min(0).max(0.9).default(0.25) }),
+  outputSchema: arbitrageOutput,
+  view: { name: "arbitrage-board", description: "Cross-marketplace spreads with photo, relevance and catch-risk evidence", prefersBorder: false, csp: { resourceDomains: ["https://i.ebayimg.com", "https://m.media-amazon.com", "https://media-assets.grailed.com", "https://fonts.googleapis.com", "https://fonts.gstatic.com"] } },
   annotations: { readOnlyHint: true, openWorldHint: true },
 }, async ({ query, limit, min_spread_pct }) => {
   const r = await arbitrage(query, { limit, min_spread_pct });
-  return text({ ...r, opportunities: r.opportunities.map((o) => ({ ...o, listing: compact(o.listing) })) });
+  const out = { ...r, opportunities: r.opportunities.map((o) => ({ ...o, listing: compact(o.listing) })) };
+  const top = out.opportunities[0];
+  const summary = top ? `${out.opportunities.length} opportunities for "${query}"; best: ${top.listing.m} $${top.listing.usd} vs $${top.reference_usd} (${Math.round(top.spread_pct * 100)}% below, catch_risk ${top.catch_risk ?? "n/a"}, photo_match ${top.photo_match ?? "n/a"}). ${out.considered} listings across ${Object.keys(out.by_marketplace).length} marketplaces, ${out.kept_after_relevance} judged relevant.` : `No listing for "${query}" is ${Math.round(min_spread_pct * 100)}% below its reference; ${out.considered} listings seen.`;
+  return { content: [{ type: "text" as const, text: summary + " " + JSON.stringify(out.opportunities.map((o) => ({ m: o.listing.m, usd: o.listing.usd, spread: o.spread_usd, catch: o.catch_risk, url: o.listing.url }))) }], structuredContent: out as any };
 });
 
 server.tool({
@@ -68,6 +82,3 @@ server.tool({
 });
 
 export default server;
-const port = Number(process.env.PORT ?? 3777);
-await server.listen(port);
-console.log(`marketplace-mcp listening on http://localhost:${port}/mcp  (jev ${jevAvailable() ? "on" : "off"})`);
