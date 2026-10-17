@@ -39,7 +39,17 @@ Gotcha: a stored Claude Code login that has expired is preferred over `ANTHROPIC
 OpenAI announced the Decisions API at DevDay (2026-09-29) and opened the public beta 2026-10-06: GPT-6 Luna constrained to predicates (probability), choices (with confidence) and scores, text **and image** input, "150 ms vs 1.6 s" on their slide, **$0.10 per 1M input tokens**, output free. Jev 1.14 (2026-10-14): same three primitives plus Box, **$0.042 per 1M input tokens**, ~0.2 s P50 measured by OpenRouter, images behind an experimental header (the path this server uses, it works). A third-party benchmark in the OpenAI forum thread found Jev more accurate on nuanced judgments and Luna making about 3x as many confident wrong answers. For this server the judgment bill is noise either way (an arbitrage run is ~100 judgments of ~300 tokens: under a cent on Jev, about two on Decisions), so the choice is accuracy and integration, and Jev stays. The four judgment calls live in `src/jev.ts`; a Decisions backend would be a drop-in behind the same functions if a side-by-side is ever wanted.
 
 ## Browser layer: local Chromium or Browserbase
-`src/browser.ts` runs a local headless Chromium by default. With `BROWSERBASE_API_KEY` (+ `BROWSERBASE_PROJECT_ID`, optional `BROWSERBASE_PROXIES=1`) it creates a Browserbase session (advanced stealth) and attaches over CDP. That is the hosting path (no Chromium in the Manufact container) and the first thing to try against eBay, which blocks local Chromium. Untested so far: Kaushik's Browserbase account ran out of credits 2026-09-30 and Kelam's key sits in AWS SSM (`/kelam/_platform/KELAM_BROWSERBASE_API_KEY`, us-west-1), which this Mac has no AWS credentials for.
+`src/browser.ts` runs a local headless Chromium by default. With `BROWSER=browserbase` plus `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID` (both in Doppler `agents-want/dev`, taken from Kelam's SSM parameter and Browserbase's projects endpoint) it creates a Browserbase session and attaches over CDP.
+
+**Tested 2026-10-17 15:10 with Kelam's account (free plan, project "Production project", concurrency 3, shared with Kelam prod):**
+
+| Site | Through Browserbase | Note |
+|---|---|---|
+| eBay | **blocked** ("Error Page") | same as local Chromium; eBay blocks datacenter egress |
+| Amazon | **blocked** (results never render) | worse than local Chromium, which passes |
+| Grailed | works | key refresh and `item()` fine |
+
+`advancedStealth` is Enterprise-only (403) and residential proxies are paid-plan only (402), so on this account Browserbase is a hosting path for the Grailed browser work, not a way past eBay. It is opt-in so a key in Doppler does not silently switch the server off the working local path.
 
 ## Tools (mcp-use `MCPServer`, Streamable HTTP on `:3777/mcp`)
 - `marketplaces()` – what is searchable and via which path (agents should know the freshness of each)
