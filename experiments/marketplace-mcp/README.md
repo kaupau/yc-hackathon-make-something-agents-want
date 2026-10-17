@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **demoable** (six marketplaces end to end, 2026-10-17 14:10 PT, branch `exp/marketplace-mcp`) |
+| Status | **hosted on Manufact** (2026-10-17 16:10 PT): `https://dark-spark-ysobu.run.mcp-use.com/mcp`, branch `exp/marketplace-mcp` |
 | Owner | Kaushik |
 | Tracks | Stripe ("buy products… manage spending"), Blaxel (fan out browsing to sandboxes), Manufact (the MCP itself, built on mcp-use), Armature (AX) |
 | One-liner | `search` / `item` / `arbitrage` / `add_marketplace` over eBay, Grailed, Amazon plus any server-rendered marketplace onboarded from its URL; Jev (TypeSafe) judges relevance, photo match and "is there a catch" before a spread is quoted. |
@@ -62,6 +62,13 @@ The image (`Dockerfile`, `node:22-slim`, no Chromium, `PLAYWRIGHT_SKIP_BROWSER_D
 
 Deploy: `npx mcp-use login` (device code), then from this directory `npx mcp-use deploy --no-github --dockerfile Dockerfile --name marketplace-mcp --env-file <unquoted env> -y`. Env: `TINYFISH_API_KEY`, `TYPESAFE_API_KEY`, `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `BROWSER=browserbase`, `PORT=3000`.
 
+## Deployed to Manufact (16:10 PT)
+Server `marketplace-mcp` (slug `dark-spark-ysobu`, managed source, Dockerfile build), MCP URL **https://dark-spark-ysobu.run.mcp-use.com/mcp**. Manufact's own checks passed (health, MCP endpoint, stability). From the laptop against the hosted URL: `tools/list` shows the five tools, `marketplaces` the six marketplaces with Jev on, one `search` across all six returns listings (eBay 2.4 s, Grailed 3.3 s incl. key refresh through Browserbase, Amazon 3.7 s, Poshmark 1.5 s, Mercari 0.9 s, Vinted 12 s), and `item("grailed", 108573116)` returns the broken-zipper description through Browserbase from Manufact's side. Registered in Claude Code as `marketplace-cloud` (Connected).
+
+Headless Claude Code against the hosted URL (`.cache/mcp-cloud.json`): `arbitrage` once, then the report: 5 turns, 42 s, **$0.12**. It skipped the $150 "READ" listing (catch_risk 0.87), flagged the $150 "investigate" (photo_match 0.60), and picked the brand-new $165 (catch_risk 0.09, photo_match 0.75) as the cleanest flip.
+
+Deploy gotchas: `--env-file` must be project-relative (a gitignored `.env.deploy`, removed after); the manual deployment id the CLI prints is superseded by a webhook-triggered one on the managed repo, so read `deployments list` for the live id; `deployments logs/get` need the full UUID; the first deploy writes `.mcp-use/cloud/link.json` (gitignored).
+
 ## Tools (mcp-use `MCPServer`, Streamable HTTP on `:3777/mcp`)
 - `marketplaces()` – what is searchable and via which path (agents should know the freshness of each)
 - `search(query, marketplaces?, limit, sold)` – normalized compact listings per marketplace
@@ -83,7 +90,7 @@ Jev answers typed yes/no questions, it does not extract. Extraction is code (Alg
 ## Known gaps
 - No sold comps yet (Grailed sold index needs a logged-in key; eBay sold filter blocked from TinyFish). Reference price is the live median elsewhere.
 - Generic adapter URLs rely on link order matching listing order (true on the three verified sites); no images for generic listings yet.
-- Not deployed to Manufact yet; Playwright in the container is the open question (Blaxel sandbox is the fallback for the browser work).
+- Hosted Amazon rows carry search-by-title URLs, not ASINs (link alignment is unreliable on Amazon's page); the local browser path returns exact ASINs.
 
 ## Result
 _fill in after the demo or when dropped._

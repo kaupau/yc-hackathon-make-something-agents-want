@@ -8,7 +8,7 @@ Status ladder: `idea` → `building` → `demoable` (ran end to end once) → `s
 |---|---|---|---|---|---|
 | [bodega](bodega/) | Agent shops for capabilities mid-task and pays from a human-set budget | Manufact, Stripe, Primitive, Inkbox, Blaxel, Armature, InsForge | candidate | spike only (tool refresh across clients, see `bodega/spike/`) | — |
 | [tool-trials](tool-trials/) | Agent asks `which_tool(task)`; sandboxes trial every candidate and return a ranking with evidence | Blaxel, Manufact, Armature | idea | no | — (merge path into bodega via `need(task)`) |
-| [marketplace-mcp](marketplace-mcp/) | One MCP to search/compare across eBay, Grailed, Amazon + any server-rendered marketplace via `add_marketplace(url)`; Jev relevance, photo match, catch check; `arbitrage()` | Stripe, Blaxel, Manufact, Armature | **demoable** (branch `exp/marketplace-mcp`) | yes: 6 marketplaces live (3 onboarded with zero code); arbitrage flags the $150 "READ" listing as catch_risk 0.88 | promising; needs sold comps + Manufact deploy |
+| [marketplace-mcp](marketplace-mcp/) | One MCP to search/compare across eBay, Grailed, Amazon + any server-rendered marketplace via `add_marketplace(url)`; Jev relevance, photo match, catch check; `arbitrage()` | Stripe, Blaxel, Manufact, Armature | **hosted on Manufact** (`dark-spark-ysobu.run.mcp-use.com/mcp`, branch `exp/marketplace-mcp`) | yes: 6 marketplaces live from the hosted URL; Claude Code runs the buyer's-agent flow against it ($0.12) | strongest candidate so far; needs sold comps + submission write-up |
 
 ## How we judge an experiment
 - Does it use the sponsor's product for real (judges are the founders)?
