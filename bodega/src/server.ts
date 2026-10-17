@@ -41,6 +41,9 @@ import {
   type Principal,
 } from "./identity/service.js";
 import { customerAdminRouter } from "./identity/admin.js";
+import Stripe from "stripe";
+import { MarketplaceConnect, LocalConnectRepository, InsforgeConnectRepository } from "./store/connect.js";
+import { primitiveApprovalDelivery } from "./vendor/notifications.js";
 
 export interface ApplicationOptions {
   publicUrl?: string;
@@ -93,6 +96,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
     publicUrl,
     adminToken,
     env,
+    deliverApproval: primitiveApprovalDelivery(env, publicUrl),
   });
   const remote =
     env.INSFORGE_URL && env.INSFORGE_API_KEY
@@ -140,7 +144,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
       ) || 0,
     ),
   });
-  const payments =
+  const basePayments =
     options.payments ??
     (env.BODEGA_PAYMENTS === "stripe-cli"
       ? createStripeCliPayments({
@@ -154,6 +158,15 @@ export async function createApplication(options: ApplicationOptions = {}) {
             webhookSecret: env.STRIPE_WEBHOOK_SECRET,
           })
         : createMockPayments());
+  const connect = env.BODEGA_CONNECT === "1" ? new MarketplaceConnect(
+    env.BODEGA_CONNECT_BACKEND === "insforge"
+      ? new InsforgeConnectRepository(env.INSFORGE_URL!, env.INSFORGE_API_KEY!)
+      : new LocalConnectRepository(env.BODEGA_CONNECT_DB_PATH ?? (walletPath === ":memory:" ? ":memory:" : ".bodega/connect.sqlite")),
+    new Stripe(env.STRIPE_SECRET_KEY ?? "", { timeout: 15000, maxNetworkRetries: 2 }),
+    vendor.catalog, publicUrl,
+  ) : null;
+  if (connect && (!/^(?:rk|sk)_test_[A-Za-z0-9]+$/.test(env.STRIPE_SECRET_KEY ?? "") || basePayments.mode !== "stripe")) throw new Error("Connect requires sandbox Stripe payments");
+  const payments = connect ? connect.payments(basePayments) : basePayments;
   const runtime = createTrialRuntime(vendor, {
     maxTrialMinutes: env.BODEGA_MAX_TRIAL_MINUTES
       ? Number(env.BODEGA_MAX_TRIAL_MINUTES)
@@ -175,21 +188,18 @@ export async function createApplication(options: ApplicationOptions = {}) {
     let existing = storefronts.get(principal.id);
     if (!existing) {
       existing = (async () => {
-        // Insert-or-ignore: an existing wallet is never reset or replenished.
-        await state.ensureSession(
-          principal.id,
-          principal.capCents,
-          principal.thresholdCents,
-        );
-        return new Storefront(services, payments, state, {
+        const store = new Storefront(services, payments, state, {
           sessionId: principal.id,
           capCents: principal.capCents,
           thresholdCents: principal.thresholdCents,
           humanEmail: principal.email,
           publicUrl,
           paymentFlow: env.BODEGA_PAYMENT_FLOW === "mpp" ? "mpp" : "direct",
+          primitiveInbox: env.PRIMITIVE_TRIAL_INBOX,
           proxy: (r) => proxy(r),
         });
+        await store.ready;
+        return store;
       })();
       storefronts.set(principal.id, existing);
       existing.catch(() => storefronts.delete(principal.id));
@@ -220,6 +230,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
   // Validates MPP configuration eagerly at startup.
   const mppHandler = mppConfig ? mppFor(storefront) : null;
   proxy = createProxyHandler(services, {
+    primitiveInbox: env.PRIMITIVE_TRIAL_INBOX,
     // Paid project keys are bearer capabilities resolved globally by their HMAC;
     // possession of the key is the grant. MCP use/buy remain principal-scoped.
     resolvePurchasedKey: async (token) => {
@@ -227,6 +238,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
       return p
         ? {
             listing_id: p.listing_id,
+            session_id: p.session_id,
             lease_id: p.id,
             expires_at: new Date(p.expires_at).toISOString(),
             consume: async () => await state.consume(p.id),
@@ -287,6 +299,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
       payments: payments.mode === "mock" ? "simulated" : "stripe-sandbox",
       persistence: remote?.status() ?? "local-sqlite",
       wallet: state.kind,
+      connect: { enabled: !!connect, marketplace_fee_percent: 0, charge_pattern: connect ? "destination" : null },
       identity: {
         backend: repository.mode,
         agent_credentials_required: identity.requiresCredentials,
@@ -456,6 +469,24 @@ export async function createApplication(options: ApplicationOptions = {}) {
     adminToken.length >= 24 &&
     adminToken !== agentToken &&
     same(req.get("authorization") ?? "", `Bearer ${adminToken}`);
+  app.post("/admin/sellers/onboard", express.json({ limit: "8kb" }), async (req, res) => {
+    if (!isAdmin(req)) { res.status(401).json({ error: "Administrator authorization required" }); return; }
+    if (!connect) { res.status(503).json({ error: "Connect is not configured" }); return; }
+    try {
+      const body = req.body;
+      if (!body || Object.keys(body).some(k => !["vendorId", "email", "displayName", "country"].includes(k)) || ![body.vendorId,body.email,body.displayName,body.country].every(v => typeof v === "string")) throw new Error("Invalid seller details");
+      res.json(await connect.onboard(body));
+    } catch { res.status(400).json({ error: "Seller onboarding unavailable; verify details and Connect configuration" }); }
+  });
+  app.get("/admin/sellers/:vendorId", async (req,res) => {
+    if (!isAdmin(req)) { res.status(401).json({ error: "Administrator authorization required" }); return; }
+    if (!connect) { res.status(503).json({ error: "Connect is not configured" }); return; }
+    try { res.json(await connect.status(String(req.params.vendorId))); }
+    catch { res.status(503).json({ error: "Seller verification unavailable" }); }
+  });
+  for (const page of ["refresh", "return"]) app.get(`/seller/onboarding/${page}`, (_req,res) => {
+    res.type("text").send(page === "refresh" ? "Your Stripe onboarding link expired. Ask your Bodega operator for a fresh authenticated onboarding link." : "Stripe onboarding returned to Bodega. Your operator must verify transfer eligibility before enabling checkout; returning here does not prove onboarding is complete.");
+  });
   app.get("/admin/approvals", async (req, res) => {
     if (!isAdmin(req)) {
       res.status(401).json({ error: "Administrator authorization required" });
@@ -573,6 +604,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
     vendor,
     runtime,
     remote,
+    connect,
     async close() {
       clearInterval(timer);
       await Promise.all([...sessions.values()].map((s) => s.server.close()));
@@ -580,6 +612,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
       await remote?.close();
       await state.close();
       await repository.close();
+      connect?.repository.close();
       vendor.close();
     },
   };

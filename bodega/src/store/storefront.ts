@@ -7,6 +7,7 @@ import type {
   Verdict,
 } from "../contracts/index.js";
 import type { PurchasedAccess } from "../runtime/index.js";
+import { primitiveInboxFor } from "../runtime/email-scope.js";
 import type {
   PaymentOrder,
   PaymentProvider,
@@ -23,6 +24,7 @@ export interface StorefrontOptions {
   /** Server-injected proxy; never accepts an agent-supplied upstream address. */
   proxy?: (request: Request) => Promise<Response | null>;
   paymentFlow?: "direct" | "mpp";
+  primitiveInbox?: string;
 }
 export class Storefront {
   private inFlight = new Map<string, Promise<unknown>>();
@@ -91,6 +93,7 @@ export class Storefront {
     return {
       trial_id: t.id,
       listing_id: id,
+      ...(id === 'primitive-email' ? {email_address: primitiveInboxFor(this.options.sessionId,this.options.primitiveInbox)} : {}),
       quota: { limit: t.limit, used: t.used, unit: t.unit },
       expires_at: t.expires_at,
       quickstart: l.quickstart,
@@ -191,6 +194,7 @@ export class Storefront {
             project_key: this.state.tokenFor(p.id),
             base_url: `${this.options.publicUrl}/proxy/${this.state.tokenFor(p.id)}`,
             tools_now_available: l.adds_tools,
+            ...(l.id === 'primitive-email' ? {email_address: primitiveInboxFor(p.session_id,this.options.primitiveInbox)} : {}),
           }
         : {}),
       ...(p.status === "pending" || p.status === "charging"
@@ -380,6 +384,7 @@ export class Storefront {
     return p
       ? {
           listing_id: p.listing_id,
+          session_id: p.session_id,
           lease_id: p.id,
           expires_at: new Date(p.expires_at).toISOString(),
           consume: async () => this.state.consume(p.id),
@@ -419,8 +424,12 @@ export class Storefront {
     if (
       id === "primitive-email" &&
       ["send_email", "ask_by_email"].includes(tool)
-    )
+    ) {
       path = "/send-mail";
+      body = {to:args.to,subject:args.subject,body_text:args.body_text ?? args.body,body_html:args.body_html};
+    } else if (id === 'primitive-email' && tool === 'read_inbox') {
+      path = '/emails?limit=50'; method='GET'; body=undefined;
+    }
     else if (
       id === "inkbox-email" &&
       tool === "send_email" &&

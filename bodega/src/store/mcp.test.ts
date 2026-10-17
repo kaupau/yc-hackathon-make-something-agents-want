@@ -35,7 +35,7 @@ test("eight storefront tools initially; verified paid buy enables deduplicated p
     const purchase=await h.client.callTool({name:"buy",arguments:{listing_id:"primitive-email",reason:"passed comparison",request_id:"stable-id"}});
     assert.match(text(purchase),/bdg_live_project-key/);
     const names=(await h.client.listTools()).tools.map(t=>t.name);
-    assert.equal(names.filter(n=>n==="send_email").length,1);assert.ok(names.includes("ask_by_email"));assert.ok(!names.includes("read_inbox"));
+    assert.equal(names.filter(n=>n==="send_email").length,1);assert.ok(names.includes("ask_by_email"));assert.ok(names.includes("read_inbox"));
     assert.ok(h.changes>0);
     const use=await h.client.callTool({name:"send_email",arguments:{args:{to:"demo@example.test"}}});
     assert.ok(!use.isError);assert.equal(h.calls.at(-1)?.listing,"primitive-email");
@@ -53,7 +53,7 @@ test("locked provider tools remain guarded by session.use and do not select unpa
     assert.equal(ambiguous.isError,true);assert.equal(h.calls.length,0);
     const unauthorized=await h.client.callTool({name:"send_email",arguments:{listing_id:"primitive-email",args:{}}});
     assert.equal(unauthorized.isError,true);assert.equal(h.calls.length,1);assert.ok(!text(unauthorized).includes("secret upstream"));
-    const wrongProvider=await h.client.callTool({name:"read_inbox",arguments:{listing_id:"primitive-email",args:{}}});
+    const wrongProvider=await h.client.callTool({name:"read_inbox",arguments:{listing_id:"postpigeon-email",args:{}}});
     assert.equal(wrongProvider.isError,true);assert.equal(h.calls.length,1);
   } finally {await h.close();}
 });

@@ -55,14 +55,14 @@ export const LISTINGS: Listing[] = [
     category: "email",
     one_line: "Managed inboxes for agents: send, receive and get threaded replies in one call",
     keywords: ["email", "inbox", "send", "receive", "reply", "replies", "mail", "agent"],
-    docs_url: "https://docs.primitive.dev/llms.txt",
+    docs_url: "https://www.primitive.dev/llms.txt",
     quickstart:
-      "await fetch(`${process.env.BODEGA_TOOL_BASE_URL}/send-mail`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.BODEGA_TOOL_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ to, subject, body }) })",
+      "await fetch(`${process.env.BODEGA_TOOL_BASE_URL}/send-mail`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.BODEGA_TOOL_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ to: process.env.BODEGA_EMAIL_ADDRESS, subject: 'Test', body_text: 'Hello from Bodega' }) })",
     sandbox: baseImage(),
     checks: ["email.roundtrip"],
     trial: trial("api_calls", 20, 500),
     price: { buy_usd: 2.0, unit_label: "1,000 emails" },
-    adds_tools: ["send_email", "ask_by_email"],
+    adds_tools: ["send_email", "ask_by_email", "read_inbox"],
     real: true,
   },
   {

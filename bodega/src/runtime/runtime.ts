@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { CheckResult, ComparisonReport, Listing, RunRequest, RunResult, Services, Trial, TrialRuntime } from '../contracts/index.js';
 import { unavailableBackend, type SandboxBackend } from './backend.js';
 import { emailRoundtripScript, type EmailCheckOptions } from './checks.js';
+import { primitiveInboxFor } from './email-scope.js';
 
 export type RuntimeServices = Pick<Services, 'catalog' | 'ledger' | 'vault'>;
 export interface RuntimeOptions {
@@ -54,12 +55,14 @@ export class ManagedTrialRuntime implements TrialRuntime {
     if (!base) throw new Error('BODEGA_PUBLIC_URL or publicBaseUrl is required for sandbox proxy access');
     const proxy = new URL(base);
     if (!['http:', 'https:'].includes(proxy.protocol) || proxy.username || proxy.password) throw new Error('Invalid public proxy URL');
-    const trial: Trial = { id, listing_id: listing.id, session_id, sandbox_id: null, status: 'provisioning', used: 0, limit: listing.trial.per_agent, unit: listing.trial.unit, token: `bdg_trial_${randomBytes(24).toString('base64url')}`, started_at: new Date(this.now()).toISOString(), expires_at: new Date(this.now() + minutes * 60000).toISOString() };
+    const startedAt = this.now();
+    const trial: Trial = { id, listing_id: listing.id, session_id, sandbox_id: null, status: 'provisioning', used: 0, limit: listing.trial.per_agent, unit: listing.trial.unit, token: `bdg_trial_${randomBytes(24).toString('base64url')}`, started_at: new Date(startedAt).toISOString(), expires_at: new Date(startedAt + minutes * 60000).toISOString() };
     await this.services.ledger.createTrial(trial);
     this.owned.add(id);
     try {
       // No upstream credential is ever requested here or sent to the sandbox.
-      const sandboxId = await this.backend.create({ id: `bodega-${randomUUID()}`, image: listing.sandbox.image, ttlSeconds: Math.ceil(minutes * 60), env: { BODEGA_TOOL_BASE_URL: `${proxy.origin}/proxy/${trial.token}`, BODEGA_TOOL_KEY: trial.token } });
+      const inbox = listing.vendor_id === 'primitive' ? primitiveInboxFor(session_id, this.options.email?.primitiveInbox) : undefined;
+      const sandboxId = await this.backend.create({ id: `bodega-${randomUUID()}`, image: listing.sandbox.image, ttlSeconds: Math.ceil(minutes * 60), env: { BODEGA_TOOL_BASE_URL: `${proxy.origin}/proxy/${trial.token}`, BODEGA_TOOL_KEY: trial.token, ...(inbox ? {BODEGA_EMAIL_ADDRESS:inbox} : {}) } });
       await this.services.ledger.updateTrial(id, { sandbox_id: sandboxId });
       for (const command of listing.sandbox.install) {
         const result = await this.backend.exec(sandboxId, { command, timeoutMs: 30000 });
@@ -112,7 +115,7 @@ export class ManagedTrialRuntime implements TrialRuntime {
         const listing = await this.services.catalog.get(id);
         if (!listing || !listing.checks.includes(check_id)) throw new Error('Listing does not support this check');
         if (check_id !== 'email.roundtrip') throw new Error('Only email.roundtrip is implemented');
-        const content = emailRoundtripScript(listing, this.options.email);
+        const content = emailRoundtripScript(listing, {...this.options.email,primitiveInbox:primitiveInboxFor(session_id,this.options.email?.primitiveInbox)});
         loc = content.trim().split('\n').length;
         trial = await this.start(listing, session_id);
         const result = await this.run({ trial_id: trial.id, file: { path: '/blaxel/app/bodega-check.mjs', content }, timeout_s: Math.ceil((this.options.email?.timeoutMs ?? 40000) / 1000) + 3 });

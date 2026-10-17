@@ -1,6 +1,6 @@
 import Stripe from "stripe";
 import { Mppx, stripe } from "mppx/server";
-import { BODEGA_SANDBOX_ACCOUNT, paymentBinding } from "./payments.js";
+import { BODEGA_SANDBOX_ACCOUNT, paymentBinding, settlementParams } from "./payments.js";
 import type { Storefront } from "./storefront.js";
 
 export interface MppOptions {
@@ -12,7 +12,7 @@ export interface MppOptions {
 /** Official HTTP 402/SPT adapter. Never falls back to a test card when the buyer supplies no credential. */
 export function createMppHandler(store: Storefront, options: MppOptions) {
   if (
-    !/^sk_test_[A-Za-z0-9]+$/.test(options.secretKey) ||
+    !/^(?:sk|rk)_test_[A-Za-z0-9]+$/.test(options.secretKey) ||
     !options.networkId ||
     Buffer.byteLength(options.challengeSecret) < 32
   )
@@ -45,9 +45,10 @@ export function createMppHandler(store: Storefront, options: MppOptions) {
       return Response.json({
         status: "paid",
         receipt_id: p.payment_intent_id,
-        project_key: store.state.tokenFor(id),
+        project_key: await store.state.tokenFor(id),
       });
-    const order = store.order(p);
+    const baseOrder = store.order(p);
+    let order = baseOrder;
     if (order.paymentMode !== "mpp")
       return Response.json(
         { error: "MPP is not enabled for this purchase" },
@@ -56,6 +57,7 @@ export function createMppHandler(store: Storefront, options: MppOptions) {
     let reference: string | undefined;
     let claimed = false;
     try {
+      order = await store.payments.prepare?.(baseOrder) ?? baseOrder;
       // All credentials are verified by mppx before this narrow client performs a mutation.
       const fixedClient = {
         paymentIntents: {
@@ -80,7 +82,7 @@ export function createMppHandler(store: Storefront, options: MppOptions) {
               throw new Error("Payment already in progress");
             claimed = true;
             const result = await client.paymentIntents.create(
-              { ...params, metadata: paymentBinding(order) },
+              { ...params, ...settlementParams(order), metadata: paymentBinding(order) },
               { ...requestOptions, idempotencyKey: order.idempotencyKey },
             );
             reference = result.id;
@@ -141,8 +143,8 @@ export function createMppHandler(store: Storefront, options: MppOptions) {
           status: "paid",
           purchase_id: id,
           receipt_id: p.payment_intent_id,
-          project_key: store.state.tokenFor(id),
-          base_url: `${store.options.publicUrl}/proxy/${store.state.tokenFor(id)}`,
+          project_key: await store.state.tokenFor(id),
+          base_url: `${store.options.publicUrl}/proxy/${await store.state.tokenFor(id)}`,
         }),
       );
     } catch {

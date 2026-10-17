@@ -1,8 +1,9 @@
 import type { Services } from '../contracts/index.js';
+import { primitiveInboxFor } from './email-scope.js';
 
 export interface UpstreamPolicy { origin: string; pathPrefixes: string[]; allowPrivate?: boolean }
 export interface PurchasedAccess {
-  listing_id: string; lease_id: string; expires_at: string;
+  listing_id: string; lease_id: string; expires_at: string; session_id?: string;
   /** Atomically reserve one paid credit. False means do not forward. */
   consume(): Promise<boolean>;
 }
@@ -12,6 +13,8 @@ export interface ProxyOptions {
   /** Store-owned official MPP challenge, if configured. Default is a plain JSON 402. */
   paymentRequired?: (listingId: string) => Promise<Response>;
   timeoutMs?: number; maxRequestBytes?: number; maxResponseBytes?: number; now?: () => number;
+  /** Enforces mailbox isolation when the real pooled Primitive account is configured. */
+  primitiveInbox?: string;
 }
 const DEFAULT_POLICIES: Record<string, UpstreamPolicy> = {
   'primitive-email': { origin: 'https://api.primitive.dev', pathPrefixes: ['/v1/send-mail', '/v1/emails'] },
@@ -73,13 +76,32 @@ export function createProxyHandler(services: Pick<Services, 'vault' | 'ledger'>,
       const target = new URL(`${base.pathname.replace(/\/$/, '')}${suffix}${incoming.search}`, base.origin);
       if (target.origin !== base.origin || !policy.pathPrefixes.some(prefix => fits(target.pathname, prefix))) return json(403, 'Upstream path is not allowed');
       if (trial && trial.unit !== 'api_calls') return json(403, 'This token does not have an API-call quota');
+      const primitiveOwner = trial?.session_id ?? purchased?.session_id;
+      const inbox = listingId === 'primitive-email' && options.primitiveInbox && primitiveOwner ? primitiveInboxFor(primitiveOwner, options.primitiveInbox) : undefined;
+      if (listingId === 'primitive-email' && options.primitiveInbox && !inbox) return json(403, 'Mailbox owner unavailable');
+      if (inbox) {
+        if (!(target.pathname === '/v1/send-mail' && request.method === 'POST') && !(target.pathname === '/v1/emails' && request.method === 'GET')) return json(403, 'Mailbox route is not permitted');
+        if (request.method === 'GET') {
+          for (const name of [...target.searchParams.keys()]) if (!['limit','cursor','since','wait','date_from','date_to','status','awaiting','automated'].includes(name)) target.searchParams.delete(name);
+          target.searchParams.set('recipient', inbox);
+          if (!target.searchParams.has('limit')) target.searchParams.set('limit','50');
+        }
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 15000);
       const abort = () => controller.abort(); request.signal.addEventListener('abort', abort, { once: true });
       if (request.signal.aborted) controller.abort();
       let secret: string | undefined;
       try {
-        const body = await boundedBody(request.body, options.maxRequestBytes ?? 256000, controller.signal);
+        let body = await boundedBody(request.body, options.maxRequestBytes ?? 256000, controller.signal);
+        if (inbox && request.method === 'POST') {
+          let message: Record<string,unknown>;
+          try { message = JSON.parse(Buffer.from(body).toString('utf8')); } catch { return json(400,'A JSON email body is required'); }
+          if (!message || typeof message !== 'object' || Array.isArray(message)) return json(400,'Invalid email');
+          const clean = Object.fromEntries(['to','subject','body_text','body_html'].flatMap(k=>typeof message[k]==='string'?[[k,message[k]]]:[]));
+          if (!clean.body_text && typeof message.body === 'string') clean.body_text=message.body;
+          body = Buffer.from(JSON.stringify({...clean,from:inbox}));
+        }
         const lease = await services.vault.lease(listingId, trial?.id ?? purchased!.lease_id);
         secret = lease.secret;
         if (!secret || !Number.isFinite(Date.parse(lease.expires_at)) || Date.parse(lease.expires_at) <= now()) return json(503, 'Upstream credential unavailable');
@@ -99,6 +121,13 @@ export function createProxyHandler(services: Pick<Services, 'vault' | 'ledger'>,
         const contentType = upstream.headers.get('content-type') ?? 'application/json';
         if (!/json|text\//i.test(contentType)) return json(502, 'Unsupported upstream response type');
         let text = new TextDecoder().decode(payload);
+        if (inbox && request.method === 'GET' && upstream.ok) {
+          let envelope: any;
+          try { envelope=JSON.parse(text); } catch { return json(502,'Invalid mailbox response'); }
+          if (!envelope || !Array.isArray(envelope.data)) return json(502,'Invalid mailbox response');
+          const messages = envelope.data.filter((m:any)=>typeof m.recipient === 'string' && m.recipient.toLowerCase() === inbox);
+          text=JSON.stringify({data:messages,meta:{cursor:envelope.meta?.cursor??null}});
+        }
         text = text.replaceAll(secret, '[redacted]');
         const mime = contentType.split(';')[0].trim().toLowerCase();
         const safeContentType = /^application\/(?:[a-z0-9.+-]+\+)?json$/.test(mime) ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8';
