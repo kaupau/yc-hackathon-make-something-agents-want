@@ -1,0 +1,16 @@
+{
+  "name": "bodega",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Bodega: agents find, trial, compare and buy dev tools",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "demo:mock": "tsx src/mocks/demo.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

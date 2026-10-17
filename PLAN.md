@@ -1,5 +1,7 @@
 # Bodega: the capability store for agents
 
+> **Update 2026-10-17 12:30 PT: Bodega + Trials.** Bodega now adds vendor-funded trials, sandboxed head-to-head `compare`, and a vendor funnel, split into three parallel streams. See [`TEAM_PLAN.md`](TEAM_PLAN.md) (shared doc: [Bodega + Trials: Team Plan](https://claude.ai/code/artifact/78d6f078-f841-45e5-b234-31de0fdf445e)) and the contracts scaffold in `bodega/`. **Superseded here:** §1 demo script and §5 split/schedule. **Still holds:** §2 hosting and payments, §3 listing API details, §4 accounts, §6 risks, §7 sponsor asks.
+
 Build plan for the YC "Make Something Agents Want" hackathon. Sat 2026-10-17 10:30 AM to Sun 2026-10-18 10:00 AM, YC HQ. Team: Kaushik + Sami. Written 2026-10-17 07:50 PT.
 
 Working name "Bodega" (rename freely). Everything below was checked against sponsor docs or run on this laptop this morning; dates and caveats are inline.
