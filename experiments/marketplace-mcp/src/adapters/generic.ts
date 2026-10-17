@@ -8,7 +8,7 @@ import type { Adapter, Listing, SearchOptions } from "../types.js";
  * the page's repeated item-link prefix, aligned by order.
  * Verified on Poshmark, Mercari and Vinted (2026-10-17).
  */
-export interface GenericConfig { name: string; template: string; item_prefix: string; origin: string; added_at: string; sample_count: number; sold_template?: string }
+export interface GenericConfig { name: string; template: string; item_prefix: string; origin: string; added_at: string; sample_count: number; sold_template?: string; /** CSS selectors that scope extraction to the listing cards; bypasses TinyFish's boilerplate pass, which drops Poshmark's grid text on some pages */ selectors?: string[] }
 
 const PRICE_LINE = /^\$\s?\d[\d,]*(?:\.\d\d)?(?:\s*\$\s?\d[\d,]*(?:\.\d\d)?)?$/;
 const SIZE_LINE = /^(?:Size:?\s*)?(?:(?:XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,2}(?:\.\d)?[A-Z]?|One Size|Various sizes|OS)(?:\s*\/\s*US\s*[\d\-]+)?(?:\s*·\s*.+)?|US \d+)$/i;
@@ -67,9 +67,21 @@ export function makeGenericAdapter(cfg: GenericConfig): Adapter {
       const tpl = opts.sold ? cfg.sold_template : cfg.template;
       if (!tpl) throw new Error(`${cfg.name}: no sold listings view`);
       const url = tpl.replace("{q}", encodeURIComponent(query));
-      const r = await tinyfishFetch([url], { format: "markdown", links: true, purpose: opts.sold ? "sold listings for price comps" : "read product listings for price comparison" });
-      if (r.errors.length) throw new Error(`${cfg.name}: ${r.errors[0].error}`);
-      return parseListings(r.results[0].text, r.results[0].links ?? [], cfg.item_prefix, cfg.name, !!opts.sold).slice(0, opts.limit ?? 20);
+      // client-rendered result grids (Poshmark sold view) sometimes snapshot before the results mount: only the
+      // filter sidebar comes back. Retry with a live fetch; a real empty result set is accepted after the retries.
+      let rows: Listing[] = []; let lastErr = "";
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt) await new Promise((res) => setTimeout(res, 1500 * attempt));
+        // scoped first (card text survives), unscoped on the last attempt in case the selectors stop matching
+        const scoped = cfg.selectors?.length && attempt < 2;
+        const r = await tinyfishFetch([url], { format: "markdown", links: true, purpose: opts.sold ? "sold listings for price comps" : "read product listings for price comparison", ...(attempt ? { ttl: 0 } : {}), ...(scoped ? { selectors: cfg.selectors } : {}) });
+        if (r.errors.length) { lastErr = r.errors[0].error; continue; }
+        rows = parseListings(r.results[0].text, r.results[0].links ?? [], cfg.item_prefix, cfg.name, !!opts.sold);
+        const itemLinks = (r.results[0].links ?? []).filter((l) => l.includes(cfg.item_prefix)).length;
+        if (rows.length > 0 || itemLinks === 0 && r.results[0].text.length > 3000) break; // real results, or a genuinely empty page
+      }
+      if (rows.length === 0 && lastErr) throw new Error(`${cfg.name}: ${lastErr}`);
+      return rows.slice(0, opts.limit ?? 20);
     },
   };
 }
