@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "bodega": {
+      "type": "streamable-http",
+      "url": "https://bodega-production-4802.up.railway.app/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": { "type": "api_key", "headerScheme": "bearer" }
+        }
+      }
+    }
+  }
+}

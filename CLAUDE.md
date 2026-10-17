@@ -24,7 +24,7 @@ Fetch these before writing code that touches a sponsor product:
 
 ## Bodega app (merged from `codex/storefront`)
 
-The working Bodega platform lives in `bodega/` at the repo root (Railway deploys from there), with InsForge migrations in `migrations/`. `AGENTS.md` holds the InsForge and Stripe Projects CLI rules; read it before touching either. The agent-swarm demo is `experiments/bodega/swarm/`.
+The working Bodega platform lives in `bodega/` at the repo root (Railway deploys from there), with InsForge migrations in `migrations/`. `AGENTS.md` holds the InsForge and Stripe Projects CLI rules; read it before touching either. The agent-swarm demo is `experiments/bodega/swarm/`; the Claude Code / Codex plugin is `experiments/bodega/plugin/` (marketplaces at `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`; run `claude plugin validate .` after editing either).
 
 <!-- stripe-projects-cli managed:claude-md:start -->
 look at AGENTS.md for your rules

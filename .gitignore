@@ -8,7 +8,8 @@ dist/
 # InsForge & AI agent skills
 .insforge
 .agent
-.agents
+.agents/*
+!.agents/plugins/
 .augment
 .claude
 .cline

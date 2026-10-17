@@ -21,6 +21,7 @@ See [PLAN.md](PLAN.md) (§7 = sponsor brief check, §8 = alternative framing). S
 
 ## Code
 - [`/bodega`](../../bodega/): the platform (MCP storefront, trials, wallet, Stripe sandbox, InsForge), merged from `codex/storefront`. Hosted at `https://bodega-production-4802.up.railway.app`.
+- [`plugin/`](plugin/): Bodega as a Claude Code and Codex plugin (MCP server + a skill that makes agents shop here instead of searching the web). `claude plugin marketplace add kaupau/yc-hackathon-make-something-agents-want && claude plugin install bodega@bodega`.
 - [`swarm/`](swarm/): six agents with separate wallets find, trial, compare and buy dev tools at the same time; live floor plus shareable replay. `cd swarm && npm ci && npm run swarm`.
 
 ## Result
