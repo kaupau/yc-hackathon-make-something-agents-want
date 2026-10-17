@@ -30,6 +30,18 @@ Line to end on: *"Nothing was pre-installed. The agent decided, the agent paid, 
 
 **Dynamic tools, and the one-flag fallback.** Listing tools are registered at startup and `.disable()`d; a purchase calls `.enable()`, the SDK sends `tools/list_changed`, and interactive Claude Code re-fetches the list and the tool appears mid-session (verified on this laptop over stdio and over the SDK's Streamable HTTP, §spike table). Every tool description carries its price anyway, and every handler checks the wallet before running, so the **locked-tool pattern is the same code with one flag**: `LOCKED_TOOLS=1` registers everything enabled from the start, and an unpurchased call returns the MPP 402 result and Bodega auto-pays within policy. **The fallback is a flag, not a rewrite.** Flip it if the noon smoke test (§5) shows Manufact's gateway drops the GET stream, or for headless clients, which never re-fetch.
 
+**SDK choice, reconsidered at 12:20 against what Manufact's judges actually asked for.** In the YC chat the Manufact team said "use mcp-use TypeScript" and "demo in multiple clients" (§7). That changes the trade:
+
+| | Official SDK, dynamic tools | mcp-use SDK, `LOCKED_TOOLS` |
+|---|---|---|
+| Manufact judges' stated ask | Not met (not their SDK) | Met |
+| "Demo in multiple clients" | The appearing-tools moment works only in interactive Claude Code; headless, Inspector and ChatGPT never re-fetch (measured) | Identical behaviour in every client, by construction |
+| The one moment lost | none | tools do not appear; the price tag and auto-pay carry the demo instead |
+| Build cost today | spike exists, Dockerfile needed | `create-mcp-use-app`, `mcp-use deploy` with no Dockerfile, Inspector and analytics first-class |
+| Noon risk | gateway may drop the GET stream anyway | none of that applies |
+
+**Pick, one line: build on mcp-use in `LOCKED_TOOLS` mode, because the biggest prize pool's judges asked for their SDK and for multi-client demos, and the appearing-tools moment fails in every client except the one on the projector.** Keep `spike/http-server.mjs` as the optional stdio shim for the projector only, after 21:00. The §5 noon smoke test shrinks to the hello-tool check plus env injection; the second check (hosted tool refresh) is dropped.
+
 **Tools exposed from the start**
 
 | Tool | Does | Returns (keep it under ~150 tokens) |
@@ -256,3 +268,37 @@ Sources: [event page](https://events.ycombinator.com/MakeSomethingAgentsWant), [
 **Agent-facing docs to feed our own Claude Code sessions** (add to the repo `CLAUDE.md` so both of us build against current docs): `https://docs.mcp-use.com/llms.txt`, `https://docs.primitive.dev/llms.txt` (`/llms-full.txt` for the corpus), `https://docs.armature.tech/llms.txt`, InsForge MCP skill resource above, Blaxel `bl skills install`.
 
 **Judging logistics from the page:** submissions due + live demos **10:00 AM Sun**, judging completes 11:00, winners 12:15. Lunch lightning talks 12:15 today, dinner talks 6:00 PM.
+
+---
+
+## 8. Alternative and merge: trial-based reviews ("Yelp for agent tools")
+
+Proposed by a teammate at 12:15. Assessment forwarded from the brainstorm session, condensed; the decision is Kaushik's.
+
+**The idea.** Agents get Blaxel sandboxes, run the same task against many agent tools (MCP servers, APIs), and publish verified reviews. Reviews are verified by construction: task, tokens, latency, success, cost are attached to every one, so the fake-review problem never starts and there is no cold start because trials run live. Thesis in one line: tool descriptions lie, and agents pay in tokens to find out.
+
+**Strong.** The Blaxel demo is the best "something a human would never want" moment on the board: 20 sandboxes, same task, a different tool in each, results streaming into a table. No human tests 20 tools before picking one.
+
+**Worries.** It lands on two judges' own products: Manufact's test suites across clients and models, and Armature running real agent workflows against a product and showing traces. Frame it as the public, cross-vendor layer above their tools, never a replacement. It must be agent-consumed to fit the brief (an MCP call, not a leaderboard humans read), and it must mean agent tools, not Cursor versus Claude Code. Only three tracks apply (Blaxel, Manufact, Armature); Stripe, Inkbox, Primitive and InsForge have nothing to judge. Scoring is the hard part: tasks need mechanical checks (the fetch returns the right title, the geocode lands within 50 m), not an LLM judge.
+
+**Agent-facing contract.**
+
+```
+which_tool(task: string, candidates?: string[], budget_s?: number)
+  -> { winner: {tool, server_url, evidence: {success, latency_ms, tokens, cost_usd, run_id}},
+       ranked: [...same shape...],
+       task_check: "mechanical check that was applied",
+       trials_run: n, sandboxes_used: n }
+```
+Plus `trial(task, tool)` for one explicit run and `evidence(run_id)` for the raw log. Results are small enough to read inline; raw logs stay behind `evidence()`.
+
+**Merge path: try before you buy.** The store's `need(capability)` runs trials before it recommends. Candidate listings spin up in sandboxes, get tested against the agent's actual task, are ranked by evidence, and the winner is the one sold. The trial engine is the store's ranking brain; the store gives the engine the money, identity and phone tracks it lacks.
+
+*One-afternoon scope for the merged version (not a co-equal product):*
+- `need()` gains an optional `task` argument. When present, Bodega fans the candidate listings for that capability out to Blaxel sandboxes (reuse `fan_out`, §3.5), runs each against the task with a mechanical check, and returns `ranked` with evidence attached to the usual listing shape.
+- Three capabilities with two or more candidates each, so there is something to rank: `fetch` (plain fetch vs TinyFish vs a Blaxel-hosted headless browser; check = page title), `email` (Primitive vs Inkbox; check = message id returned), `phone` (Kelam real line vs `front-desk` sim; check = `extracted` non-empty).
+- Checks are string or numeric comparisons only. No LLM judge today.
+- Budget: trials are priced too (sandbox minutes), so the agent pays to find out, which is the thesis in the ledger.
+- Cut line: if the sandbox fan-out is not green by 16:30, `need()` returns the static ranking and the trial engine is a slide.
+
+**Net.** Standalone it is a respectable three-track entry with the best single demo moment; the store is higher expected value. If the team is energized by trials and cold on the store, a finished trial engine beats a half-built store. Two systems in one day is the risk either way; merged, the trial engine must stay a one-afternoon feature.
