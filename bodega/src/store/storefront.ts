@@ -12,7 +12,7 @@ import type {
   PaymentProvider,
   PaymentResult,
 } from "./payments.js";
-import { WalletStore, StoreError, type Attempt } from "./wallet.js";
+import { StoreError, type Attempt, type WalletBackend } from "./wallet.js";
 
 export interface StorefrontOptions {
   sessionId: string;
@@ -26,17 +26,28 @@ export interface StorefrontOptions {
 }
 export class Storefront {
   private inFlight = new Map<string, Promise<unknown>>();
+  /** Resolves once the wallet session exists; every wallet-touching method awaits it. */
+  readonly ready: Promise<void>;
   constructor(
     readonly services: Services,
     readonly payments: PaymentProvider,
-    readonly state: WalletStore,
+    readonly state: WalletBackend,
     readonly options: StorefrontOptions,
   ) {
-    state.ensureSession(
-      options.sessionId,
-      options.capCents,
-      options.thresholdCents,
+    // Synchronous backends still throw invalid policies from the constructor.
+    this.ready = Promise.resolve(
+      state.ensureSession(
+        options.sessionId,
+        options.capCents,
+        options.thresholdCents,
+      ),
     );
+    this.ready.catch(() => {});
+  }
+  private async attempt(id: string) {
+    const p = await this.state.get(id);
+    if (!p) throw new StoreError("NO_PURCHASE", "Purchase unavailable");
+    return p;
   }
   order(p: Attempt): PaymentOrder {
     return {
@@ -141,7 +152,7 @@ export class Storefront {
     );
     if (old) await this.services.ledger.updatePurchase(p.id, this.purchase(p));
     else await this.services.ledger.recordPurchase(this.purchase(p));
-    if (p.status === "paid" && !this.state.isFulfilled(p.id)) {
+    if (p.status === "paid" && !(await this.state.isFulfilled(p.id))) {
       await this.services.ledger.recordReview({
         id: `buy:${p.id}`,
         listing_id: p.listing_id,
@@ -152,10 +163,11 @@ export class Storefront {
         source: "auto",
         created_at: new Date(p.created_at).toISOString(),
       });
-      this.state.markFulfilled(p.id);
+      await this.state.markFulfilled(p.id);
     }
   }
-  private result(p: Attempt, l: Listing) {
+  private async result(p: Attempt, l: Listing) {
+    const remaining = (await this.state.view(p.session_id)).remaining_cents;
     return {
       purchase_id: p.id,
       listing_id: p.listing_id,
@@ -185,7 +197,7 @@ export class Storefront {
         ? { payment_pending: true }
         : {}),
       ...(p.error ? { error: p.error } : {}),
-      remaining_usd: this.state.view(p.session_id).remaining_cents / 100,
+      remaining_usd: remaining / 100,
     };
   }
   async buy(
@@ -205,8 +217,9 @@ export class Storefront {
     }
   }
   private async buyInternal(id: string, requestId: string) {
+    await this.ready;
     const l = await this.listing(id);
-    let p = this.state.reserve(
+    let p = await this.state.reserve(
       this.options.sessionId,
       id,
       Math.round(l.price.buy_usd * 100),
@@ -221,30 +234,33 @@ export class Storefront {
           this.purchase(p),
           this.options.humanEmail,
         );
-        this.state.setApproval(p.id, approval.approve_url);
-        p = this.state.get(p.id)!;
+        await this.state.setApproval(p.id, approval.approve_url);
+        p = await this.attempt(p.id);
         await this.mirror(p);
       }
       const decision = await this.services.approvals.status(p.id);
       if (decision === "pending") return this.result(p, l);
       if (decision === "declined") {
-        this.state.decline(p.id, "Human approval declined or expired");
-        p = this.state.get(p.id)!;
+        await this.state.decline(p.id, "Human approval declined or expired");
+        p = await this.attempt(p.id);
         await this.mirror(p);
         return this.result(p, l);
       }
-      this.state.approve(p.id);
-      p = this.state.get(p.id)!;
+      await this.state.approve(p.id);
+      p = await this.attempt(p.id);
     }
     if (p.status === "paid" || p.status === "declined")
       return this.result(p, l);
     if (this.options.paymentFlow === "mpp")
       return {
-        ...this.result(p, l),
+        ...(await this.result(p, l)),
         payment_mode: "mpp",
         payment_url: `${this.options.publicUrl}/mpp/${p.id}`,
       };
-    if (!this.state.claim(p.id)) return this.result(this.state.get(p.id)!, l);
+    if (!(await this.state.claim(p.id)))
+      return this.result(await this.attempt(p.id), l);
+    // Re-read under the lease: another node may have recorded a payment id meanwhile.
+    p = await this.attempt(p.id);
     let outcome: PaymentResult;
     try {
       outcome = p.payment_intent_id
@@ -256,7 +272,7 @@ export class Storefront {
         error: "Payment outcome unknown; reservation remains held",
       };
     }
-    p = this.state.finish(
+    p = await this.state.finish(
       p.id,
       outcome.status,
       outcome.paymentIntentId,
@@ -266,7 +282,8 @@ export class Storefront {
     return this.result(p, l);
   }
   async completePayment(order: PaymentOrder, result: PaymentResult) {
-    const p = this.state.get(order.id);
+    await this.ready;
+    const p = await this.state.get(order.id);
     if (
       !p ||
       p.session_id !== order.sessionId ||
@@ -280,7 +297,7 @@ export class Storefront {
     const verified = result.paymentIntentId
       ? await this.payments.inspect(order, result.paymentIntentId)
       : { status: "pending" as const };
-    const done = this.state.finish(
+    const done = await this.state.finish(
       p.id,
       verified.status,
       verified.paymentIntentId,
@@ -289,9 +306,10 @@ export class Storefront {
     await this.mirror(done);
   }
   async reconcile(paymentId: string, purchaseId?: string) {
+    await this.ready;
     const p =
-      this.state.byPayment(paymentId) ??
-      (purchaseId ? this.state.get(purchaseId) : null);
+      (await this.state.byPayment(paymentId)) ??
+      (purchaseId ? await this.state.get(purchaseId) : null);
     if (!p || p.status === "needs_approval") return;
     const result = await this.payments.inspect(this.order(p), paymentId);
     if (result.status === "pending")
@@ -299,7 +317,7 @@ export class Storefront {
         "PAYMENT_PENDING",
         "Payment verification pending; retry reconciliation",
       );
-    const next = this.state.finish(
+    const next = await this.state.finish(
       p.id,
       result.status,
       result.paymentIntentId,
@@ -308,7 +326,8 @@ export class Storefront {
     await this.mirror(next);
   }
   async wallet() {
-    const w = this.state.view(this.options.sessionId);
+    await this.ready;
+    const w = await this.state.view(this.options.sessionId);
     return {
       session_id: w.session_id,
       cap_usd: w.cap_cents / 100,
@@ -357,7 +376,7 @@ export class Storefront {
     return { recorded: true };
   }
   async resolvePurchasedKey(token: string): Promise<PurchasedAccess | null> {
-    const p = this.state.resolveToken(token);
+    const p = await this.state.resolveToken(token);
     return p
       ? {
           listing_id: p.listing_id,
@@ -368,10 +387,9 @@ export class Storefront {
       : null;
   }
   async use(id: string, tool: string, args: Record<string, unknown>) {
+    await this.ready;
     const l = await this.listing(id);
-    const p = this.state
-      .list(this.options.sessionId)
-      .find(
+    const p = (await this.state.list(this.options.sessionId)).find(
         (p) =>
           p.listing_id === id &&
           p.status === "paid" &&
@@ -384,7 +402,7 @@ export class Storefront {
         "Purchase this capability before using it",
       );
     if (!l.real) {
-      if (!this.state.consume(p.id))
+      if (!(await this.state.consume(p.id)))
         throw new StoreError("QUOTA_EXCEEDED", "Purchased quota exhausted");
       return {
         simulated: true,

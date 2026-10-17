@@ -42,13 +42,16 @@ test("concurrent buys charge once, replay returns same key, credits are atomic a
     assert.equal(charges, 1);
     assert.ok(results.every((r) => r.status === "paid"));
     assert.equal(new Set(results.map((r) => r.project_key)).size, 1);
-    a.state.ensureSession("local-demo", 100000, 100000);
+    await a.state.ensureSession("local-demo", 100000, 100000);
     assert.equal((await a.storefront.wallet()).remaining_usd, 0.1);
     await assert.rejects(a.storefront.buy("seekr-search"), /budget/);
-    const p = a.state.list("local-demo")[0];
+    const p = (await a.state.list("local-demo"))[0];
     assert.equal(
-      Array.from({ length: 1005 }, () => a.state.consume(p.id)).filter(Boolean)
-        .length,
+      (
+        await Promise.all(
+          Array.from({ length: 1005 }, () => a.state.consume(p.id)),
+        )
+      ).filter(Boolean).length,
       1000,
     );
   } finally {
@@ -63,7 +66,7 @@ test("approval is required, hidden from purchasing agent and one-use before paid
     assert.equal(first.status, "needs_approval");
     assert.ok(!JSON.stringify(first).includes("/approve/"));
     assert.equal((await a.storefront.wallet()).reserved_usd, 2);
-    const url = a.state.list("local-demo")[0].approval_url!;
+    const url = (await a.state.list("local-demo"))[0].approval_url!;
     const page = await a.vendor.handleRequest(new Request(url));
     assert.equal(page?.status, 200);
     assert.equal(
@@ -145,6 +148,36 @@ test("SQLite restart preserves signing key, spend and pending charge leases", ()
     w.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("SQLite wallet binds receipts to one attempt and payment mode and guards approvals", () => {
+  const w = new WalletStore(":memory:");
+  try {
+    w.ensureSession("human", 1000, 100);
+    const big = w.reserve("human", "big", 300);
+    assert.throws(() => w.finish(big.id, "paid", "mock_a"), {
+      code: "APPROVAL_REQUIRED",
+    });
+    w.setApproval(big.id, "https://x/approve/1");
+    w.setApproval(big.id, "https://x/approve/2");
+    assert.equal(w.get(big.id)?.approval_url, "https://x/approve/1");
+    const p = w.reserve("human", "small", 90);
+    assert.throws(() => w.finish(p.id, "paid", "pi_stripeonly"), {
+      code: "NO_RECEIPT",
+    });
+    w.finish(p.id, "paid", "mock_a");
+    const q = w.reserve("human", "small", 90, "second");
+    assert.throws(() => w.finish(q.id, "paid", "mock_a"), {
+      code: "RECEIPT_CONFLICT",
+    });
+    w.finish(q.id, "pending", "mock_b");
+    assert.throws(() => w.finish(q.id, "paid", "mock_c"), {
+      code: "RECEIPT_CONFLICT",
+    });
+    assert.equal(w.view("human").reserved_cents, 390);
+  } finally {
+    w.close();
   }
 });
 
@@ -280,11 +313,11 @@ test("HTTP webhooks retry unavailable verification, reconcile lost receipts, and
       });
     assert.equal((await notify("bad")).status, 400);
     assert.equal((await notify()).status, 503);
-    assert.equal(a.state.hasEvent("evt_webhookfixture"), false);
+    assert.equal(await a.state.hasEvent("evt_webhookfixture"), false);
     assert.equal((await a.storefront.wallet()).reserved_usd, 0.9);
     ready = true;
     assert.equal((await notify()).status, 200);
-    assert.equal(a.state.hasEvent("evt_webhookfixture"), true);
+    assert.equal(await a.state.hasEvent("evt_webhookfixture"), true);
     assert.equal((await a.storefront.wallet()).spent_usd, 0.9);
     const n = inspections;
     assert.equal((await notify()).status, 200);

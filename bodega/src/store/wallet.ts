@@ -45,11 +45,95 @@ export class StoreError extends Error {
     super(message);
   }
 }
-const cents = (value: number) => Number.isSafeInteger(value) && value >= 0;
-const digest = (s: string) => createHash("sha256").update(s).digest("hex");
+export type MaybePromise<T> = T | Promise<T>;
+export interface WalletView {
+  session_id: string;
+  cap_cents: number;
+  threshold_cents: number;
+  spent_cents: number;
+  reserved_cents: number;
+  remaining_cents: number;
+  purchases: Attempt[];
+}
+/**
+ * Wallet admission authority. Implementations may be synchronous (local SQLite) or
+ * asynchronous (shared InsForge/Postgres); callers must always `await` results.
+ * Invariants every backend keeps:
+ * - ensureSession never resets or replenishes an existing wallet.
+ * - reserve is idempotent per (session, listing, request) and rejects changed amount/payment mode.
+ * - every non-declined attempt (pending/charging included) holds budget; paid is never downgraded.
+ * - paid requires a receipt whose prefix matches the attempt payment mode.
+ * - a receipt binds to at most one attempt and never changes once recorded.
+ * - claim grants one lease at a time; consume/credential/event/fulfilled markers are atomic.
+ */
+export interface WalletBackend {
+  readonly kind: "local-sqlite" | "insforge";
+  ensureSession(
+    sessionId: string,
+    capCents: number,
+    thresholdCents: number,
+  ): MaybePromise<void>;
+  get(id: string): MaybePromise<Attempt | null>;
+  byPayment(id: string): MaybePromise<Attempt | null>;
+  list(sessionId: string): MaybePromise<Attempt[]>;
+  view(sessionId: string): MaybePromise<WalletView>;
+  reserve(
+    sessionId: string,
+    listingId: string,
+    amountCents: number,
+    requestId?: string,
+    creditLimit?: number,
+    paymentMode?: string,
+  ): MaybePromise<Attempt>;
+  setApproval(id: string, url: string): MaybePromise<void>;
+  approve(id: string): MaybePromise<void>;
+  decline(id: string, reason: string): MaybePromise<void>;
+  claim(id: string): MaybePromise<boolean>;
+  finish(
+    id: string,
+    status: "paid" | "pending" | "declined",
+    paymentId?: string,
+    error?: string,
+  ): MaybePromise<Attempt>;
+  /** Deterministic project key; a pure function of the (shared) signing secret. */
+  tokenFor(id: string): string;
+  resolveToken(token: string): MaybePromise<Attempt | null>;
+  consume(id: string): MaybePromise<boolean>;
+  bindMppCredential(id: string, credential: string): MaybePromise<boolean>;
+  hasEvent(eventId: string): MaybePromise<boolean>;
+  markEvent(eventId: string): MaybePromise<void>;
+  isFulfilled(id: string): MaybePromise<boolean>;
+  markFulfilled(id: string): MaybePromise<void>;
+  close(): MaybePromise<void>;
+}
+export const cents = (value: number) =>
+  Number.isSafeInteger(value) && value >= 0;
+export const digest = (s: string) =>
+  createHash("sha256").update(s).digest("hex");
+export const REQUEST_ID = /^[a-zA-Z0-9_-]{1,128}$/;
+export const signProjectKey = (secret: Buffer, id: string) =>
+  `bdg_live_${id}_${createHmac("sha256", secret).update(id).digest("base64url")}`;
+/** A receipt must match its payment-mode family: a mock receipt never settles a Stripe attempt. */
+export const receiptMatchesMode = (mode: string, paymentId: string) =>
+  mode.startsWith("mock:")
+    ? /^mock_[A-Za-z0-9]{1,255}$/.test(paymentId)
+    : mode.startsWith("stripe:")
+      ? /^pi_[A-Za-z0-9_]{1,255}$/.test(paymentId)
+      : false;
+export const validPurchase = (
+  amountCents: number,
+  creditLimit: number,
+  requestId: string,
+) =>
+  Number.isSafeInteger(amountCents) &&
+  amountCents >= 50 &&
+  Number.isSafeInteger(creditLimit) &&
+  creditLimit >= 1 &&
+  REQUEST_ID.test(requestId);
 
 /** Local durable demo wallet. All reservations/admissions use SQLite transactions. */
-export class WalletStore {
+export class WalletStore implements WalletBackend {
+  readonly kind = "local-sqlite" as const;
   readonly db: DatabaseSync;
   private secret: Buffer;
   constructor(
@@ -145,7 +229,7 @@ export class WalletStore {
       )
       .all(sessionId) as unknown as Attempt[];
   }
-  view(sessionId: string) {
+  view(sessionId: string): WalletView {
     const policy = this.db
       .prepare(
         "SELECT cap_cents,threshold_cents FROM wallets WHERE session_id=?",
@@ -178,13 +262,7 @@ export class WalletStore {
     creditLimit = 1000,
     paymentMode = "mock:direct",
   ): Attempt {
-    if (
-      !Number.isSafeInteger(amountCents) ||
-      amountCents < 50 ||
-      !Number.isSafeInteger(creditLimit) ||
-      creditLimit < 1 ||
-      !/^[a-zA-Z0-9_-]{1,128}$/.test(requestId)
-    )
+    if (!validPurchase(amountCents, creditLimit, requestId))
       throw new StoreError(
         "INVALID_PURCHASE",
         "Invalid purchase or amount below $0.50",
@@ -238,7 +316,8 @@ export class WalletStore {
   setApproval(id: string, url: string) {
     this.db
       .prepare(
-        "UPDATE attempts SET approval_url=? WHERE id=? AND status='needs_approval'",
+        // First approval request wins so concurrent buyers converge on one approval link.
+        "UPDATE attempts SET approval_url=COALESCE(approval_url,?) WHERE id=? AND status='needs_approval'",
       )
       .run(url, id);
   }
@@ -275,15 +354,27 @@ export class WalletStore {
       const old = this.get(id);
       if (!old) throw new StoreError("NO_PURCHASE", "Purchase unavailable");
       if (old.status === "paid") return old; // Late failed events never downgrade a paid purchase.
+      if (old.status === "needs_approval")
+        throw new StoreError("APPROVAL_REQUIRED", "Human approval required");
       if (
         status === "paid" &&
-        (!paymentId ||
-          (!paymentId.startsWith("pi_") && !paymentId.startsWith("mock_")))
+        (!paymentId || !receiptMatchesMode(old.payment_mode, paymentId))
       )
         throw new StoreError(
           "NO_RECEIPT",
           "Verified payment identifier required",
         );
+      if (paymentId) {
+        const owner = this.byPayment(paymentId);
+        if (
+          (old.payment_intent_id && old.payment_intent_id !== paymentId) ||
+          (owner && owner.id !== id)
+        )
+          throw new StoreError(
+            "RECEIPT_CONFLICT",
+            "Payment identifier conflicts with the recorded attempt",
+          );
+      }
       const token = this.tokenFor(id);
       this.db
         .prepare(
@@ -300,7 +391,7 @@ export class WalletStore {
     });
   }
   tokenFor(id: string) {
-    return `bdg_live_${id}_${createHmac("sha256", this.secret).update(id).digest("base64url")}`;
+    return signProjectKey(this.secret, id);
   }
   resolveToken(token: string) {
     const row = this.db

@@ -9,7 +9,8 @@ import { homepage } from "./store/home.js";
 import { createStoreMcp } from "./store/mcp.js";
 import { createMppHandler } from "./store/mpp.js";
 import { Storefront } from "./store/storefront.js";
-import { WalletStore } from "./store/wallet.js";
+import type { WalletBackend } from "./store/wallet.js";
+import { createWalletBackend, type WalletFactoryOptions } from "./store/insforge-wallet.js";
 import {
   BODEGA_SANDBOX_ACCOUNT,
   createMockPayments,
@@ -56,6 +57,8 @@ export interface ApplicationOptions {
   /** Test/deployment seam for customer identities. Defaults by BODEGA_IDENTITY_BACKEND. */
   identity?: IdentityRepository;
   identityPath?: string;
+  wallet?: WalletBackend;
+  walletFactory?: Omit<WalletFactoryOptions, "env" | "walletPath">;
 }
 const same = (a: string, b: string) => {
   const left = Buffer.from(a),
@@ -103,7 +106,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
       : null;
   const walletPath =
     options.walletPath ?? env.BODEGA_WALLET_DB_PATH ?? ".bodega/payments.sqlite";
-  const state = new WalletStore(walletPath);
+  const state = options.wallet ?? await createWalletBackend({ ...options.walletFactory, env, walletPath });
   const repository: IdentityRepository =
     options.identity ??
     (identityBackend === "insforge"
@@ -283,6 +286,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
       runtime: runtime.backend.mode,
       payments: payments.mode === "mock" ? "simulated" : "stripe-sandbox",
       persistence: remote?.status() ?? "local-sqlite",
+      wallet: state.kind,
       identity: {
         backend: repository.mode,
         agent_credentials_required: identity.requiresCredentials,

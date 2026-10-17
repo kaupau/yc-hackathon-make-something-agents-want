@@ -24,7 +24,8 @@ export function createMppHandler(store: Storefront, options: MppOptions) {
     new Stripe(options.secretKey, { maxNetworkRetries: 2, timeout: 15000 });
   return async (request: Request): Promise<Response> => {
     const id = new URL(request.url).pathname.split("/").at(-1)!;
-    let p = store.state.get(id);
+    await store.ready;
+    let p = await store.state.get(id);
     if (!p || p.session_id !== store.options.sessionId)
       return Response.json({ error: "Purchase unavailable" }, { status: 404 });
     if (p.status === "needs_approval" || p.status === "declined")
@@ -35,7 +36,7 @@ export function createMppHandler(store: Storefront, options: MppOptions) {
     if (p.payment_intent_id && ["pending", "charging"].includes(p.status)) {
       try {
         await store.reconcile(p.payment_intent_id, id);
-        p = store.state.get(id)!;
+        p = (await store.state.get(id))!;
       } catch {
         /* Keep reservation while verification is unavailable. */
       }
@@ -69,13 +70,13 @@ export function createMppHandler(store: Storefront, options: MppOptions) {
             )
               throw new Error("Order mismatch");
             if (
-              !store.state.bindMppCredential(
+              !(await store.state.bindMppCredential(
                 id,
                 params.shared_payment_granted_token,
-              )
+              ))
             )
               throw new Error("Use the original credential for this purchase");
-            if (!store.state.claim(id))
+            if (!(await store.state.claim(id)))
               throw new Error("Payment already in progress");
             claimed = true;
             const result = await client.paymentIntents.create(
@@ -111,7 +112,7 @@ export function createMppHandler(store: Storefront, options: MppOptions) {
       })(request);
       if (result.status === 402) {
         if (claimed)
-          store.state.finish(
+          await store.state.finish(
             id,
             "pending",
             reference,
@@ -129,7 +130,7 @@ export function createMppHandler(store: Storefront, options: MppOptions) {
         status: "paid",
         paymentIntentId: reference,
       });
-      p = store.state.get(id)!;
+      p = (await store.state.get(id))!;
       if (p.status !== "paid")
         return Response.json(
           { error: "Payment verification pending" },
@@ -146,12 +147,17 @@ export function createMppHandler(store: Storefront, options: MppOptions) {
       );
     } catch {
       if (claimed)
-        store.state.finish(
-          id,
-          "pending",
-          reference,
-          "MPP verification pending; replay original purchase",
-        );
+        // Best effort: if the shared wallet is unreachable the charging lease expires and is re-claimable.
+        await Promise.resolve()
+          .then(() =>
+            store.state.finish(
+              id,
+              "pending",
+              reference,
+              "MPP verification pending; replay original purchase",
+            ),
+          )
+          .catch(() => {});
       return Response.json(
         { error: "MPP payment unavailable or verification pending" },
         { status: 503 },
