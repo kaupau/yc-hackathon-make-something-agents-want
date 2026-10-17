@@ -51,6 +51,17 @@ OpenAI announced the Decisions API at DevDay (2026-09-29) and opened the public 
 
 `advancedStealth` is Enterprise-only (403) and residential proxies are paid-plan only (402), so on this account Browserbase is a hosting path for the Grailed browser work, not a way past eBay. It is opt-in so a key in Doppler does not silently switch the server off the working local path.
 
+## Hosted mode (for Manufact), verified in Docker 2026-10-17 15:45
+The image (`Dockerfile`, `node:22-slim`, no Chromium, `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`) runs with `BROWSER=browserbase`: eBay, Amazon and the generic marketplaces go through TinyFish (Amazon via selector-scoped markdown, search-by-title URLs since product links cannot be aligned to results), Grailed uses its index with the hourly key and `item()` pages fetched through a Browserbase session. Container test, all six marketplaces in one `search`:
+
+| ebay | grailed | amazon | poshmark | mercari | vinted |
+|---|---|---|---|---|---|
+| 1.8 s | 2.3 s (incl. key refresh via Browserbase) | 3.5 s | 1.4 s | 0.9 s | 13.9 s |
+
+`item("grailed", 108573116)` through Browserbase inside the container returned the broken-zipper description. Gotcha: `doppler secrets download --format env` quotes values and Docker's `--env-file` keeps the quotes (every key reads as invalid); use `--format env-no-quotes`.
+
+Deploy: `npx mcp-use login` (device code), then from this directory `npx mcp-use deploy --no-github --dockerfile Dockerfile --name marketplace-mcp --env-file <unquoted env> -y`. Env: `TINYFISH_API_KEY`, `TYPESAFE_API_KEY`, `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `BROWSER=browserbase`, `PORT=3000`.
+
 ## Tools (mcp-use `MCPServer`, Streamable HTTP on `:3777/mcp`)
 - `marketplaces()` – what is searchable and via which path (agents should know the freshness of each)
 - `search(query, marketplaces?, limit, sold)` – normalized compact listings per marketplace
