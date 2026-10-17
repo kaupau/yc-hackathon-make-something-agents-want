@@ -15,9 +15,9 @@ Query "arcteryx beta ar jacket", all three marketplaces, one process:
 
 | Marketplace | Path that works | Latency | Notes |
 |---|---|---|---|
-| Grailed | Algolia index `Listing_production` (app `MNRWEFSS2Q`) queried directly; the hourly secured search key is minted by `POST /api/algolia/keys` behind Cloudflare, so headless Chromium loads one shop page to capture it (1 s, cached to `.cache/grailed-key.json`) | 0.3 s | 60+ fields per hit incl. size, condition, designer, location. `Listing_sold_production` is **refused** for the anonymous key |
+| Grailed | Algolia index `Listing_production` (app `MNRWEFSS2Q`) queried directly; the hourly secured search key is minted by `POST /api/algolia/keys` behind Cloudflare, so headless Chromium loads one shop page to capture it (1 s, cached to `.cache/grailed-key.json`). `item()` reads the listing page's `__NEXT_DATA__` + the `seller_ratings` API response (1.3 s) | 0.3 s | 60+ fields per hit incl. size, condition, designer, location. `Listing_sold_production` is **refused** for the anonymous key |
 | Amazon | Headless Chromium on `amazon.com/s` and `/dp/ASIN` | 1.5–2 s | Title, price, rating, review count, sponsored flag. Review **text** is behind sign-in now; dp pages expose rating + count only. Browser-side scripts are strings (tsx injects `__name` into transpiled callbacks) |
-| eBay | TinyFish Fetch (server-side Chromium) of `ebay.com/sch`, markdown + links; bullet order matches link order once the template `/itm/123456` is dropped (verified against item pages) | 10–12 s | Plain curl and local headless Chromium are blocked. TinyFish's HTML/JSON formats strip anchors and classes, so markdown is the only parseable form. The sold/completed filter returns eBay's error page from TinyFish. Upgrade path: official Browse API with `EBAY_CLIENT_ID/SECRET` (needs a developer account) |
+| eBay | TinyFish Fetch (server-side Chromium) of `ebay.com/sch`, markdown + links + image_links; bullet order matches link order once the template `/itm/123456` is dropped (verified against item pages). Queries are lower-cased so equivalent searches share TinyFish's cache; 3 attempts with backoff because a fresh render often meets the bot wall | 10–12 s | Plain curl and local headless Chromium are blocked. TinyFish's HTML/JSON formats strip anchors and classes, so markdown is the only parseable form. The sold/completed filter returns eBay's error page from TinyFish. Upgrade path: official Browse API with `EBAY_CLIENT_ID/SECRET` (needs a developer account) |
 
 `arbitrage("arcteryx beta ar jacket")` through the MCP: 55 listings considered, Jev kept 50 as the product itself, top result an eBay Beta AR at $150 vs a $650 Amazon median (reference = median live ask on the other marketplaces, since no sold comps were reachable). Whole call about 25 s.
 
@@ -28,10 +28,23 @@ Query "arcteryx beta ar jacket", all three marketplaces, one process:
 
 Jev image path: the API accepts PNG/JPEG with each side 280–1568 px and never resizes, so `sharp` normalizes every photo (Amazon thumbnails are 160 px, Grailed photos 1706 px, eBay serves WebP). Amazon's `_AC_SL1000_` variant is requested in place of the thumbnail.
 
+## Claude Code as the client (14:45 PT)
+Registered with `claude mcp add --transport http --scope user marketplace http://localhost:3777/mcp` (shows **Connected** in `claude mcp list`). Headless run, `claude -p --mcp-config .cache/mcp.json --allowedTools "mcp__marketplace__*"`, prompt: *"You are a resale buyer's agent… find Arc'teryx Beta AR jackets listed well below what they sell for elsewhere, decide whether the top 2 are real deals or have a catch."*
+
+The agent discovered the four tools, called `arbitrage(query, limit 5, min_spread_pct 0.15)`, then `item()` on its top two Grailed picks, and wrote the report: 7 turns, 60 s, **$0.14**. It called the $129 "worn" listing *risky, pass or inspect* (catch_risk 0.31, the highest in the set) and the $372 vintage one *a real deal*. `item()` on Grailed was not implemented at that moment; it is now, and the $129 listing's description reads *"Jacket need to be fixed. zipper some times doesn't work properly."* The agent's call was right from the tool's evidence alone.
+
+Gotcha: a stored Claude Code login that has expired is preferred over `ANTHROPIC_API_KEY`; run headless with `CLAUDE_CONFIG_DIR=<scratch>` to force the key without logging the user out.
+
+## Jev vs OpenAI Decisions API (checked 2026-10-17)
+OpenAI announced the Decisions API at DevDay (2026-09-29) and opened the public beta 2026-10-06: GPT-6 Luna constrained to predicates (probability), choices (with confidence) and scores, text **and image** input, "150 ms vs 1.6 s" on their slide, **$0.10 per 1M input tokens**, output free. Jev 1.14 (2026-10-14): same three primitives plus Box, **$0.042 per 1M input tokens**, ~0.2 s P50 measured by OpenRouter, images behind an experimental header (the path this server uses, it works). A third-party benchmark in the OpenAI forum thread found Jev more accurate on nuanced judgments and Luna making about 3x as many confident wrong answers. For this server the judgment bill is noise either way (an arbitrage run is ~100 judgments of ~300 tokens: under a cent on Jev, about two on Decisions), so the choice is accuracy and integration, and Jev stays. The four judgment calls live in `src/jev.ts`; a Decisions backend would be a drop-in behind the same functions if a side-by-side is ever wanted.
+
+## Browser layer: local Chromium or Browserbase
+`src/browser.ts` runs a local headless Chromium by default. With `BROWSERBASE_API_KEY` (+ `BROWSERBASE_PROJECT_ID`, optional `BROWSERBASE_PROXIES=1`) it creates a Browserbase session (advanced stealth) and attaches over CDP. That is the hosting path (no Chromium in the Manufact container) and the first thing to try against eBay, which blocks local Chromium. Untested so far: Kaushik's Browserbase account ran out of credits 2026-09-30 and Kelam's key sits in AWS SSM (`/kelam/_platform/KELAM_BROWSERBASE_API_KEY`, us-west-1), which this Mac has no AWS credentials for.
+
 ## Tools (mcp-use `MCPServer`, Streamable HTTP on `:3777/mcp`)
 - `marketplaces()` – what is searchable and via which path (agents should know the freshness of each)
 - `search(query, marketplaces?, limit, sold)` – normalized compact listings per marketplace
-- `item(marketplace, id)` – details + reviews where exposed (Amazon: rating/count; eBay/Grailed: URL only for now)
+- `item(marketplace, id)` – details: Amazon (rating/count, bullets), Grailed (description, photos, seller + seller ratings from the listing page data); eBay URL only for now
 - `arbitrage(query, limit, min_spread_pct)` – cross-marketplace spreads; per opportunity: relevance, `photo_match` vs the cheapest photographed listing elsewhere, `catch_risk` from the listing text
 - `add_marketplace(url, probe_query)` – onboard a server-rendered marketplace from its URL; persisted in `.cache/marketplaces.json` and live for search/arbitrage immediately
 
