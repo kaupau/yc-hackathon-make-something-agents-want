@@ -99,7 +99,7 @@ MPP (mpp.dev, Stripe + Tempo) is the open 402 flow: server returns a challenge, 
      -d "usage_limits[max_amount]=40" -d "usage_limits[expires_at]=1798761600"
    ```
    **The human's budget lives on the credential side**: a session cap (`$5.00`) and a per-purchase threshold (`$1.00`) are enforced in `McpClient.wrap`'s `onPaymentRequired(challenge)` hook, which returns `false` (no pay, surface `{needs_approval, approve_url}` to the agent) when the challenge exceeds the threshold or would breach the cap, and otherwise mints an SPT capped at exactly the challenge amount. Every receipt (`org.paymentauth/receipt`) is appended to `wallet()` and echoed in the tool result so the agent sees what it paid.
-   Live-mode equivalent for the slide: Link Agent Wallet (`npx @stripe/link-cli`), where the human's approval policy and daily limits are Stripe-side; not needed for the demo.
+   Live-mode equivalent for the slide: Link Agent Wallet (`npx @stripe/link-cli`). **Caveat (verified 2026-10-17):** Link currently requires approval for every purchase — "granular agent controls" (threshold-based silent spending below a set limit) is listed as a coming feature, not yet live. Do not promise Link can auto-spend below our threshold; reference it as a future live-mode upgrade only. Not needed for the demo.
 
 *Discovery.* `mppx/discovery` publishes an OpenAPI-style document of priced endpoints, so an agent knows prices before calling. Serve it at `/.well-known/mpp` next to `llms.txt`. Stripe Directory indexes MPP endpoints; listing is a preview sign-up (one POST to `docs.stripe.com/preview/register` with `preview: "stripe_directory_mcp_server_listing_preview"`), do it Saturday night, say "listed in the Stripe Directory preview" only if they reply.
 
@@ -107,7 +107,36 @@ MPP (mpp.dev, Stripe + Tempo) is the open 402 flow: server returns a challenge, 
 
 **Receipt.** After every `buy()`, and at the end, a Primitive email to the human: `POST https://api.primitive.dev/v1/send-mail` with `PRIMITIVE_API_KEY`, or `primitive send --to ... --subject ... --body ... --wait`.
 
+**Budget reservation, idempotency and error handling.** Before creating a Stripe PaymentIntent, atomically reserve the purchase amount in the session wallet (`remaining_usd -= amount_usd`). Set an idempotency key on every PaymentIntent create (`${session_id}:${listing_id}:${attempt}`). After Stripe responds:
+
+- **(a) Verify before enabling tools.** A `pi_…` id is not proof of payment. Retrieve the PaymentIntent server-side (`stripe.paymentIntents.retrieve(id)`) and verify: `pi.status === "succeeded"`, account and test/live mode match expectations, `pi.amount_received === expected_cents`, `pi.currency === expected_currency`, and `pi.metadata` contains the purchase/job binding and idempotency key. Only after all checks pass call `Ledger.updatePurchase({status:"paid", receipt_id})` and enable tools or return the project key.
+- **(b) Processing / requires_action.** Set `Purchase.status = "pending"`, return `{payment_pending: true, receipt_id}` to the agent, do not enable tools, poll until terminal.
+- **(c) Network timeout or ambiguous response.** **Keep the budget reservation.** Retrieve the stored PaymentIntent ID. If its create response was lost, replay the identical create request using the original idempotency key to recover the result; there is no assumed GET-by-idempotency-key API. Do not create a fresh charge while the outcome is unknown. Release only when that payment attempt is confirmed unsuccessful and no charge remains in flight.
+- **(d) Terminal failure.** Set `Purchase.status = "declined"`, release the reservation, return `{declined: true, reason}`.
+- **(e) On replay** (same idempotency key, existing row `status === "paid"`): return the existing `Purchase` row without re-charging.
+
+**Production Connect / vendor payout:** in production, Bodega would be a Stripe Connect platform, vendors would be connected accounts, and `buy()` would use a destination charge or transfer — explicit later decision; for the hackathon record "owed to vendor" as a ledger line and use direct test-mode charges.
+
+Reference: `docs.stripe.com/agentic-commerce/monetize-mcp` (current official guide for MPP-monetised MCP servers).
+
 **Ledger.** In memory for the demo (see Wallet state). Durable option: InsForge Postgres (`@insforge/sdk`, `createClient({baseUrl, anonKey}).database.from('ledger').insert({...})`), table created via the InsForge MCP `run-raw-sql` or dashboard. Do not let InsForge block the core loop.
+
+**Stripe Projects (service discovery and credential sync).** `stripe projects` is a Stripe CLI extension that provisions third-party services and syncs credentials to `.env`. Key commands: `stripe projects catalog` (browse ~60 providers), `stripe projects init` (set up a project directory), `stripe projects add <provider>/<service>` (provision), `stripe projects env --pull` (write `.env`). Supported providers include databases (Neon, Supabase, PlanetScale, Turso), auth (Clerk, Auth0, WorkOS), hosting (Vercel, Railway, Fly.io), AI (OpenRouter, E2B, Browserbase), and messaging (Twilio, Resend, AgentMail).
+
+**Primitive and Inkbox are not in the Stripe Projects catalog.** Obtain their keys via their own dashboards/CLIs (§3.2, §3.3) and store them in Doppler.
+
+**Four credential entries in the Bodega stack — do not mix them:**
+
+| Type | Example | Source | Used by |
+|---|---|---|---|
+| Bodega trial token (`bdg_trial_…`) | proxy token sandbox sends to `/proxy/:token/*` | Bodega `start_trial()` | Blaxel sandbox → metering proxy |
+| Bodega project key (`bdg_live_…`) | proxy token returned to agent after `buy()` | Bodega `buy()` | Agent code in the repo |
+| Stripe Projects credential | `DATABASE_URL`, `CLERK_SECRET_KEY`, … | `stripe projects env --pull` | Bodega's own infra (ledger DB, etc.) |
+| Payment credential / SPT (`spt_test_…`) | scoped Stripe token authorising one charge | Stripe test helper API | MPP payment flow only |
+
+Use Stripe Projects as a provisioning adapter for supported marketplace listings and appropriate Bodega infrastructure. Obtain exact service IDs with `stripe projects catalog <provider>` before using `stripe projects add <provider>/<service>`; Blaxel is the first candidate because it already appears in the stack. Preserve the Manufact and InsForge commitments. Bodega mints proxy tokens; Stripe's test helper or an authorized buyer wallet issues SPTs. Projects credentials stay inside Vault/private env. Projects-managed provider billing must not also incur a duplicate Bodega purchase for the same entitlement. See the authoritative [Stripe Projects workflow in TEAM_PLAN.md](TEAM_PLAN.md#stripe-projects), including billing modes, owner tasks, contract gaps and go/no-go checks. These integrations remain planned.
+
+**Stripe agent plugin for Claude Code sessions.** Run `stripe agent setup` (Stripe CLI) or `claude plugin install stripe@claude-plugins-official` at the start of each build session. Gives Claude Code current Stripe docs, live account data and skills; do this before wiring up `mppx` or any Stripe API calls.
 
 **Hosting.** Manufact Cloud via Dockerfile deploy, proven by noon with two checks at the hosted URL (§5): a hello-world tool call, and the interactive spike (tool enabled after 20 s, does Claude Code 2.1.119 see it through Manufact's gateway). Claude Code connects with `claude mcp add --transport http bodega https://<slug>.run.mcp-use.com/mcp`. **Fallbacks:** gateway drops the GET stream → flip `LOCKED_TOOLS=1`, stay on Manufact, note it in the spike table. Dockerfile deploy itself still failing at 13:00 → run the same server on the laptop with `node dist/server.js`, exposed through an Inkbox tunnel (`bodega-agent.inkboxwire.com`, created with the identity) or `cloudflared tunnel`, and connected to Manufact by URL for analytics. The listings do not change, since they already speak HTTP to every sponsor.
 
@@ -117,7 +146,9 @@ MPP (mpp.dev, Stripe + Tempo) is the open 402 flow: server returns a challenge, 
 
 Each listing is one file exporting `{id, price_usd, keywords, tools: [{name, schema, handler}]}`. Prices are made up and small; they are the demo's ledger lines.
 
-### 3.1 `phone-call` ($0.40) → `call_phone(number, goal, extract?)`
+**Credit-pack pricing (MPP card minimum $0.50, verified 2026-10-17).** Every `buy()` is one Stripe transaction; charging $0.10 or $0.40 per call would be rejected (minimum $0.50 for card payments). Solution: sell credit packs ≥ $0.50, then meter usage inside the metering proxy without further Stripe charges. `phone-call` is now $0.50/call (was $0.40). Per-send email, per-minute sandbox, and per-fetch items are sold as session-access bundles; see `bodega/src/mocks/seed.ts` for canonical `buy_usd` prices. The superseded §1 demo script shows pre-redesign per-call prices ($0.10, $0.40) that pre-date both this constraint and the Bodega+Trials approach.
+
+### 3.1 `phone-call` ($0.50) → `call_phone(number, goal, extract?)`
 - **Kelam REST API, the same one the CLI uses** (read from `packages/cli/kelam_cli/main.py`): base `https://api.kelam.sh` (the `api_url` in `~/.config/kelam/config.json`), header `X-Kelam-Password: <password>`. The password goes into Manufact env vars as `KELAM_PASSWORD` (and Doppler `bodega/dev` for local runs), never into the repo, never into argv; Sami owns rotation.
 - Place: `POST /calls` with `{"agent_id": "<agt_… or name>", "to_number": "+1…", "prompt": "<goal>", "extract": [{"name":"open_tonight","type":"boolean","description":"whether they are open tonight"}, {"name":"closes","type":"string","description":"closing time"}]}` → `{call_id, …}`. For the sim fallback send `"to_agent": "front-desk"` instead of `to_number`. Optional: `greeting`, `voicemail: "hangup"`, `language`, `context`.
 - Wait: poll `GET /calls/{call_id}` every 2 s until `status` is terminal (`ended_at` set); read `answered_by`, `human_engaged`, `extracted`, `cost`. Mirror the CLI's `--wait` loop and its `extract` list shape (`_parse_extract_option` in the same file) so the field names match what the server expects.

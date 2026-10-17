@@ -117,7 +117,7 @@ export const LISTINGS: Listing[] = [
     sandbox: null,
     checks: [],
     trial: null,
-    price: { buy_usd: 0.4, unit_label: "per call" },
+    price: { buy_usd: 0.5, unit_label: "per call" }, // $0.50 minimum for MPP card payments
     adds_tools: ["call_phone"],
     real: false,
   },

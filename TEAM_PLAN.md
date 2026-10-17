@@ -160,6 +160,18 @@ npm run demo:mock   # need -> compare -> review -> buy -> wallet -> funnel, all 
 
 **Integration rule:** each stream exports a factory that satisfies its interface. `BODEGA_MOCK` swaps one component back to its mock, so anyone can integrate early, and the demo can fall back one piece at a time.
 
+**Budget reservation, idempotency and receipt gate (Stream A contract obligations):**
+- Before calling Stripe, atomically reserve `amount_usd` in the session wallet (`remaining_usd -= amount_usd`).
+- Idempotency key on every PaymentIntent create: `${session_id}:${listing_id}:${attempt}`.
+- **Receipt gate:** a `pi_…` id is not proof of payment. Retrieve the PaymentIntent server-side and verify `pi.status === "succeeded"`, account/test-mode match, `pi.amount_received === expected_cents`, `pi.currency`, and purchase binding in `pi.metadata`. Only then call `Ledger.updatePurchase({status:"paid", receipt_id})` and enable tools / return project key. Never use a fabricated `pi_mock_*` id here.
+- **Network timeout / ambiguous:** keep the budget reservation. Retrieve the stored PaymentIntent ID; if the create response was lost, replay the identical create request with its original idempotency key to recover it. Do not create a fresh attempt or release funds until failure is confirmed.
+- Status flow: `needs_approval` → (human approves) → charging → `paid`; or `declined` (budget released); or `pending` (awaiting terminal Stripe status, tools blocked).
+- On replay (same idempotency key, `status === "paid"`): return existing `Purchase` without re-charging.
+- Declined: surface `{declined: true, reason}` and release reservation. Pending/timeout: surface `{payment_pending: true, receipt_id}`; do not enable tools.
+- Reference: `docs.stripe.com/agentic-commerce/monetize-mcp`.
+
+These are implementation requirements, not methods already provided by the scaffold. At the contract review, add a durable payment-attempt record (purchase ID, integer cents, currency, reserved amount, stable idempotency key, PaymentIntent ID and reconciliation state), atomic reserve/commit/release operations, and pending/charging states. The current `PurchaseStatus` union only contains `paid`, `needs_approval` and `declined`; do not cast a pending payment into one of those states. Keep reservation and fulfillment deduplication in the same durable purchase workflow.
+
 ## Payments: MPP, not x402
 
 Stay on MPP, the payment protocol PLAN.md §2 already chose. x402 (Coinbase: HTTP 402 settled in USDC on Base) is the same pattern, and adding it buys nothing here:
@@ -167,7 +179,50 @@ Stay on MPP, the payment protocol PLAN.md §2 already chose. x402 (Coinbase: HTT
 - It needs a crypto wallet and testnet funds.
 - No sponsor on the event page asks for it. MPP is Stripe's, Stripe is a judged track, and MPP settles to the Stripe test dashboard.
 
-There's no true agent-to-agent payment in this design. Vendors pre-fund their trial pools, and the human's budget pays the vendor through Stripe at `buy()`. The one place a 402 helps is the metering proxy: when a trial runs out, its 402 carries an MPP payment request, so a payment-aware client could pay inline. x402 stays one slide line at most.
+**The planned metering proxy is an agent-to-service payment boundary.** Its quota-exhaustion response can offer an MPP purchase. This becomes a demonstrated two-agent commerce flow only when a buyer agent pays an actual provider agent to execute work. The current in-memory demo demonstrates neither Stripe settlement nor provider-agent execution.
+
+**Optional two-agent demo (Stream A stretch — design spec only; only if `buy()` is solid by 18:30).** This is a **planned integration**, not a currently demonstrated capability. The existing mock (PostPigeon) proves the plumbing; a real two-agent flow requires an actual provider agent executing paid work. Extend PostPigeon's mock endpoint with one MPP-priced HTTP job route. Exact planned flow:
+
+1. Buyer agent sends job request with no credential → provider returns HTTP `402` with MPP challenge headers.
+2. Buyer checks human wallet policy (`job_price` within threshold and remaining budget?). If over threshold, `Approvals.request` emails the human via Primitive; wait for reply.
+3. Wallet-authorized: buyer mints an SPT scoped to `job_price` and retries with **HTTP MPP `Authorization` credential** via the official `mppx` HTTP adapter (not `_meta` fields, which are the MCP JSON-RPC transport binding only). Provider receives and validates the credential.
+4. Provider verifies Stripe test settlement before executing: retrieve the PaymentIntent server-side and confirm `pi.status === "succeeded"`, account/mode, `pi.amount_received`, `pi.currency`, and purchase/job binding in `pi.metadata`. Only then execute the job idempotently (deduplicate by request ID). Return the result with a `Payment-Receipt` header.
+5. Buyer reads the `Payment-Receipt` header and records it in the ledger. Does not consume the artifact until receipt header is present and verified. Both sides record ledger rows.
+
+**Network timeout / ambiguous Stripe response:** keep the buyer's budget reservation. Retrieve the known PaymentIntent, or recover a lost create response by replaying the identical original request with the same idempotency key. Keep provider job deduplication keyed by purchase/job ID. Do not create a fresh charge while the outcome is unknown.
+
+**Acceptance criteria:** one real `pi_…` in the Stripe test dashboard; wallet shows the deduction; job runs exactly once even if retried; provider never executes before settlement is confirmed.
+
+Reference: `docs.stripe.com/agentic-commerce/monetize-mcp` (current official guide). x402 (USDC on Base) stays one slide line; do not spend hackathon time on a second rail.
+
+## Stripe Projects
+
+`stripe projects` is a Stripe CLI extension for service discovery, provisioning and credential sync (~60 providers; see `docs.stripe.com/projects`).
+
+**Primitive and Inkbox are not in the catalog.** Use their own dashboards (PLAN.md §3.2, §3.3) and Doppler.
+
+**Credential distinction — four entries, do not mix:**
+
+| Type | Example | Produced by | Used by |
+|---|---|---|---|
+| Bodega trial token (`bdg_trial_…`) | proxy token sandbox sends to `/proxy/:token/*` | Bodega `start_trial()` | Blaxel sandbox → metering proxy |
+| Bodega project key (`bdg_live_…`) | proxy token returned after `buy()` | Bodega `buy()` | Agent code in the repo |
+| Stripe Projects credential | `DATABASE_URL`, `CLERK_SECRET_KEY` | `stripe projects env --pull` | Bodega's own infra (ledger DB, etc.) |
+| Payment credential / SPT (`spt_test_…`) | scoped Stripe token authorising one charge | Stripe test helper | MPP challenge/retry only |
+
+For supported marketplace listings, Projects is the provisioning adapter after the agent selects a winner: search the catalog, verify the exact service ID and price, associate the intended human-owned project/account, then provision and sync credentials through the server-side Vault. A listing must declare whether billing is provider-managed through Projects or a Bodega MPP credit purchase; do not charge both for the same entitlement. Projects support does not imply vendor-funded trials, per-request pricing or arbitrary resale rights. Keep those Bodega capabilities explicit.
+
+Use `stripe projects catalog <provider>` to obtain actual service IDs before `stripe projects add <provider>/<service>`; do not guess an ID. Blaxel is a documented Projects provider and is the first provisioning candidate because it already appears in this plan. Preserve Manufact hosting and InsForge as the planned ledger backend; a different database is a later team decision. Provisioning, account associations, provider terms and paid upgrades are gated setup work, not actions completed by this plan.
+
+Projects credentials remain in the server-side Vault or private environment; the agent receives only its scoped Bodega proxy key. Bodega mints its proxy tokens; Stripe's test helper or an authorized buyer wallet issues SPTs. Never manufacture an SPT locally or expose upstream credentials in tool output.
+
+Stream A owns the provisioning/billing-mode decision in `buy()`; Stream C owns catalog service mappings and Vault integration; Stream B consumes scoped proxy credentials only. Before 15:30, prove read-only catalog discovery and one explicitly authorized provisioning path, or retain the existing env/Doppler setup and label Projects as planned. For MPP, prove a sandbox payment, repeat-request deduplication, budget-cap refusal and timeout recovery; otherwise use the clearly labeled fallback. Enable the two-agent stretch only after those checks pass.
+
+Sources checked 2026-10-17: [Projects](https://docs.stripe.com/projects), [Directory](https://docs.stripe.com/directory), [MPP server flow](https://docs.stripe.com/payments/machine/mpp), [MCP payment endpoint](https://docs.stripe.com/agentic-commerce/monetize-mcp), [Link wallet](https://link.com/agents), [Connect destination charges](https://docs.stripe.com/connect/destination-charges). These sections specify planned integrations; none has been provisioned or charged by this documentation update.
+
+**Stripe agent plugin.** Run `stripe agent setup` (Stripe CLI) or `claude plugin install stripe@claude-plugins-official` at the start of each build session to give Claude Code current Stripe docs and skills. Do this before wiring `mppx`.
+
+---
 
 ## Risks
 
@@ -180,4 +235,7 @@ New, on top of PLAN.md §6.
 | Vendors don't allow an inbox per trial | One inbox per vendor, with a per-trial subject tag | B |
 | Blaxel cold starts push `compare` past 60 s | Pre-warm the three demo sandboxes; `createIfNotExists` reuses them | B |
 | MPP fights us | Ledger fallback at 15:30, same tool surface | A |
+| Stripe `pi_…` id not confirmed before enabling tools | Enforce receipt gate in store (see Shared contracts obligations above); mock demo uses `pi_mock_*` only in `mocks/demo.ts` — real store never does | A |
+| `buy()` listing price < $0.50 MPP card minimum | Sell credit packs ≥ $0.50; only `phone-call` needed adjustment ($0.40 → $0.50 in seed.ts) | A |
+| Link silently spends below threshold on stage | Link currently requires approval for every purchase; do not rely on threshold auto-spend; it is a coming feature only | A |
 | InsForge blocks the core loop | Keep the in-memory mocks behind `BODEGA_MOCK` | C |
