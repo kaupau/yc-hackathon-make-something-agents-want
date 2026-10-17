@@ -317,9 +317,23 @@ export async function createApplication(options: ApplicationOptions = {}) {
       "content-security-policy",
       `default-src 'none'; style-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'`,
     );
+    const listings = await services.catalog.search("", { limit: 100 });
+    const vendorIds = [...new Set(listings.map((l) => l.vendor_id))];
+    const funnels = await Promise.all(
+      vendorIds.map((v) => services.ledger.funnel(v).catch(() => null)),
+    );
+    const stats = { trials: 0, checks_passed: 0, purchases: 0, revenue_usd: 0 };
+    for (const f of funnels) {
+      for (const l of f?.listings ?? []) {
+        stats.trials += l.trials;
+        stats.checks_passed += l.checks_passed;
+        stats.purchases += l.purchases;
+        stats.revenue_usd += l.revenue_usd;
+      }
+    }
     res.type("html").send(
       homepage(
-        await services.catalog.search("", { limit: 100 }),
+        listings,
         {
           runtime: runtime.backend.mode,
           payments:
@@ -327,6 +341,8 @@ export async function createApplication(options: ApplicationOptions = {}) {
           backend: vendor.persistence === 'insforge-shared' ? 'InsForge shared transactions' : remote ? "InsForge catalog + audit; local admission" : "local SQLite",
         },
         nonce,
+        stats,
+        { publicUrl, agentTokenRequired: !!agentToken },
       ),
     );
   });

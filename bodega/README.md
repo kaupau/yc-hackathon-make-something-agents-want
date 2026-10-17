@@ -57,6 +57,7 @@ Protocol tests exercise official challenge creation, credential serialization, t
 - `simulated` accepts commands without executing them and labels outputs. It never ranks real providers using fake timings.
 - `blaxel` uses `BL_API_KEY`, `BL_WORKSPACE`, and optional `BL_REGION`. Commands and files run only in the cloud sandbox, never on this host. Sandboxes get only scoped Bodega proxy credentials. TTL cleanup, bounded execution, revocation, output limits, exact upstream allowlists, redirect denial, and atomic metering constrain use. A public HTTPS proxy URL is needed for cloud trials; localhost is not reachable from Blaxel.
 - Primitive and Inkbox adapters require their own server credentials. Primitive is authenticated and its real self-addressed send/receive roundtrip passed. The production proxy allocates a separate mailbox namespace per customer. Inkbox credentials remain absent.
+- Operational notes from the 2026-10-17 local run on the Blaxel runtime: a session's trial allotment never resets, so use a fresh `BODEGA_WALLET_ID` per rehearsal; sandboxes need a public HTTPS `BODEGA_PUBLIC_URL` (a cloudflared quick tunnel works locally); and the Blaxel SDK reads `./.env` and lets it shadow the process env, so never leave blank `BL_*=` lines in `.env`.
 - PostPigeon is an explicit simulation: send succeeds, receive intentionally fails authorization. The remaining catalog capabilities are simulated.
 
 ## InsForge backend
