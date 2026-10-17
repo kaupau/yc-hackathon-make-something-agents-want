@@ -88,6 +88,33 @@ Seven product markets through `arbitrage()`, limit 5, min spread 20%, from the l
 
 Findings: (1) **eBay's bot wall hit 4 of 7 queries** through TinyFish (fresh query strings have no cached render); eBay is the best source when it answers and the least reliable. (2) Most big spreads are **used-vs-new or size/condition mismatches**, not true arbitrage; the catch check catches the "read description" and parts listings, but size (kids vs adult) and condition-matched references are the next filter to add. (3) Jev's relevance filter does real work (AirPods: 34 → 4, Seiko: 59 → 3). (4) Resale markets can be above retail (YETI), which is its own signal.
 
+## Use cases: where the flips actually are (19:50 PT, 12 markets + Arc'teryx)
+Run through `arbitrage` with the flip model (sold comps from Poshmark + Mercari, condition tiers, fees, ≥3 comps, net ≥ $25, margin ≥ 20%). eBay was bot-walled for most of these, so the buy side is Grailed, Mercari, Poshmark, Amazon and the cached eBay queries.
+
+| Market | Live | Sold comps | Best clean flip | Verdict | Filtered out |
+|---|---|---|---|---|---|
+| apple airpods pro 2nd generation | 67 | 8 (mercari) | none | only suspect deals | 1 replica-suspect, 0 catch |
+| carhartt detroit jacket | 117 | 52 (poshmark+mercari) | buy grailed $87 (used) → ~$155 on poshmark (8 sold, sells fast) → **net $25** (25%) | thin | 1 replica-suspect, 1 catch |
+| coach tabby shoulder bag | 109 | 68 (poshmark+mercari) | buy grailed $200 (new) → ~$348 on mercari (4 sold, sells fast) → **net $90** (43%) | worth working | 1 replica-suspect, 0 catch |
+| dyson airwrap | 83 | 47 (poshmark+mercari) | none | only suspect deals | 3 replica-suspect, 0 catch |
+| le creuset dutch oven 5.5 | 88 | 48 (poshmark+mercari) | none | efficient market (no gap after fees) | — |
+| lego star wars millennium falcon 75192 | 85 | 7 (mercari) | none | no flip found (thin comps) | — |
+| lululemon align leggings 25 | 128 | 52 (poshmark+mercari) | none | only suspect deals | 1 replica-suspect, 0 catch |
+| new balance 990v6 | 147 | 54 (poshmark+mercari) | none | only suspect deals | 1 replica-suspect, 0 catch |
+| nintendo switch oled | 55 | 6 (mercari) | none | only suspect deals | 1 replica-suspect, 0 catch |
+| north face nuptse 1996 jacket | 115 | 49 (poshmark+mercari) | buy mercari $115 (used) → ~$240 on poshmark (7 sold, sells fast) → **net $71** (59%) | worth working | — |
+| patagonia better sweater | 138 | 45 (poshmark+mercari) | none | efficient market (no gap after fees) | — |
+| stanley quencher 40 oz tumbler | 87 | 54 (poshmark+mercari) | none | efficient market (no gap after fees) | — |
+
+Plus the running example: **Arc'teryx Beta AR**: 49 comps, buy eBay $150 used → ~$293 on Poshmark (8 closest by title, sells fast) → net $74 (46%).
+
+What this says:
+- **Worth working:** mid-tier branded outerwear and bags with deep Poshmark sold history and a cheaper venue to buy on (Grailed for bags, eBay/Mercari for jackets): Arc'teryx Beta AR, North Face Nuptse 1996, Coach Tabby. Net $70–90 per unit, several sales a week on the resale venue.
+- **Efficient markets:** Stanley Quencher, Patagonia Better Sweater, Lululemon Align: 45–55 comps and no gap after fees. The tool says so instead of inventing one.
+- **Only suspect deals:** AirPods Pro at $2, Dyson Airwrap at $30, New Balance 990v6 at $29, Nintendo Switch OLED "console dock and…" at $70 all came back flagged as suspected replicas or catches. Those are the listings that would have been "arbitrage" an hour ago.
+- **No sell side:** LEGO 75192 and electronics have thin Mercari sold data and none on Poshmark; eBay sold would fix this and is closed to us.
+- `scan(queries[])` does this sweep from inside the agent: best clean flip per product, ranked by net, with replicas counted separately.
+
 ## Flip model (18:40 PT): real arbitrage, not price gaps
 `arbitrage` now answers "can I buy this here and resell it there for a profit?":
 - **Sell side = sold listings.** Poshmark (`&availability=sold_out`) and Mercari (`&itemStatuses=2`) expose sold searches to a server-side render; the generic adapter has a `sold_template` per marketplace. eBay's sold filter and Grailed's sold index are closed to us.
@@ -112,7 +139,8 @@ Rebuilt around three questions. **What does it cost where?** A price map: one ro
 - `marketplaces()` – what is searchable and via which path (agents should know the freshness of each)
 - `search(query, marketplaces?, limit, sold)` – normalized compact listings per marketplace
 - `item(marketplace, id)` – details: Amazon (rating/count, bullets), Grailed (description, photos, seller + seller ratings from the listing page data); eBay URL only for now
-- `arbitrage(query, limit, min_spread_pct)` – cross-marketplace spreads; per opportunity: relevance, `photo_match` vs the cheapest photographed listing elsewhere, `catch_risk` from the listing text
+- `arbitrage(query, limit, min_spread_pct, min_net_usd, min_comps)` – resale flips with sold comps, fees, net profit, demand, comp samples; per opportunity: relevance, `photo_match` against a real sale, `catch_risk` + reason, `replica_risk`
+- `scan(queries[], …)` – the same across many products, best clean flip per product ranked by net
 - `add_marketplace(url, probe_query)` – onboard a server-rendered marketplace from its URL; persisted in `.cache/marketplaces.json` and live for search/arbitrage immediately
 
 ## Run
