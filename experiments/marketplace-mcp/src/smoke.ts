@@ -6,7 +6,7 @@ const query = process.argv.slice(2).join(" ") || "arcteryx beta ar jacket";
 console.log(`query: "${query}"\n`);
 const results = await Promise.all(Object.values(adapters).map(async (a) => {
   const t = Date.now();
-  try { const rows = await a.search(query, { limit: 8 }); return { name: a.name, ms: Date.now() - t, rows, path: (a as any).lastPath }; }
+  try { const rows = await Promise.race([a.search(query, { limit: 8 }), new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout 90s")), 90_000))]); return { name: a.name, ms: Date.now() - t, rows, path: (a as any).lastPath }; }
   catch (e: any) { return { name: a.name, ms: Date.now() - t, rows: [], error: e.message.split("\n")[0] }; }
 }));
 for (const r of results) {

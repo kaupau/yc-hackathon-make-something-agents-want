@@ -27,7 +27,8 @@ function fromHtml(html: string, sold: boolean): Listing[] {
 }
 
 function fromMarkdown(md: string, links: string[], sold: boolean): Listing[] {
-  const ids = [...new Set(links.map((l) => l.match(/\/itm\/(\d+)/)?.[1]).filter(Boolean))] as string[];
+  // eBay's page template carries a dummy /itm/123456 link; with it removed, link order matches bullet order (verified against item pages 2026-10-17)
+  const ids = [...new Set(links.map((l) => l.match(/\/itm\/(\d+)/)?.[1]).filter((x) => x && x !== "123456"))] as string[];
   const bullets = md.split("\n").filter((l) => l.startsWith("* ") && /\$\s?\d/.test(l));
   return bullets.map((b, i): Listing => {
     const text = b.slice(2);

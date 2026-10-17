@@ -8,7 +8,7 @@ Status ladder: `idea` → `building` → `demoable` (ran end to end once) → `s
 |---|---|---|---|---|---|
 | [bodega](bodega/) | Agent shops for capabilities mid-task and pays from a human-set budget | Manufact, Stripe, Primitive, Inkbox, Blaxel, Armature, InsForge | candidate | spike only (tool refresh across clients, see `bodega/spike/`) | — |
 | [tool-trials](tool-trials/) | Agent asks `which_tool(task)`; sandboxes trial every candidate and return a ranking with evidence | Blaxel, Manufact, Armature | idea | no | — (merge path into bodega via `need(task)`) |
-| [marketplace-mcp](marketplace-mcp/) | One MCP to search/browse/read reviews across eBay, Grailed, Amazon; Jev extracts; `arbitrage()` finds spreads | Stripe, Blaxel, Manufact, Armature | building | in progress | — |
+| [marketplace-mcp](marketplace-mcp/) | One MCP to search/browse/compare across eBay, Grailed, Amazon; Jev filters; `arbitrage()` finds spreads | Stripe, Blaxel, Manufact, Armature | **demoable** (branch `exp/marketplace-mcp`) | yes: 3/3 marketplaces return live listings; arbitrage found $150 vs $650 | promising; needs sold comps + deploy |
 
 ## How we judge an experiment
 - Does it use the sponsor's product for real (judges are the founders)?
