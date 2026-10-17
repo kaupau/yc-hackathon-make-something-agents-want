@@ -1,0 +1,22 @@
+{
+  "name": "bodega-swarm",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "A swarm of agents with separate wallets that find, trial, compare and buy dev tools on Bodega",
+  "scripts": {
+    "swarm": "tsx src/swarm.ts",
+    "swarm:claude": "tsx src/swarm.ts --brain claude",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "@modelcontextprotocol/sdk": "^1.32.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
