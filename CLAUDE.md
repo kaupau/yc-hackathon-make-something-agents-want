@@ -1,6 +1,8 @@
 # Hackathon repo: YC "Make Something Agents Want" (2026-10-17/18)
 
-Team: Kaushik + Sami. The idea is not locked; see `SPONSORS.md` for the sponsor toolbox and `PLAN.md` for one candidate ("Bodega", a capability store MCP) with its spike results in `spike/`.
+Team: Kaushik + Sami. The idea is not locked. Layout: `SPONSORS.md` is the sponsor toolbox; `experiments/<name>/` is one folder per idea with a README (status, tracks, hypothesis, smallest test, result) and `experiments/README.md` is the scoreboard; `experiments/_template/` is the starter; `shared/` holds code used by more than one experiment. Bodega (capability store MCP) is the first candidate in `experiments/bodega/` with its plan and spike.
+
+When starting a new idea: copy `experiments/_template/` to `experiments/<name>/`, fill the README, add a row to the scoreboard. When an experiment changes status, update both its README and the scoreboard row in the same commit. Keep experiment code inside its folder; promote to `shared/` only when a second experiment needs it.
 
 ## Build against current sponsor docs, not memory
 
