@@ -4,71 +4,80 @@ const esc = (v: unknown) =>
   String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const money = (n: number) => `$${n.toFixed(2)}`;
 
-/** Shared page shell for the portal and approval pages: same header, palette and type as the storefront home. */
+/** Shared page shell for the back office and approval pages: same paper, ink and mono as the storefront. */
 export function shell(title: string, body: string, nonce: string, options: { lede?: string } = {}): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${esc(title)} · Bodega</title><style nonce="${nonce}">
+:root{--paper:#f1ece1;--paper-2:#faf7f0;--ink:#161513;--ink-2:#4a463f;--mute:#8a847a;--rule:#161513;--red:#d1331b;--yellow:#f7d64a;--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;--sans:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Inter,Arial,sans-serif}
 *{box-sizing:border-box}
-body{margin:0;background:#f7f5ed;color:#252c25;font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+html{background:var(--paper)}
+body{margin:0;color:var(--ink);font:15px/1.5 var(--sans);background:var(--paper)}
 a{color:inherit}
-header,main{max-width:1160px;margin:auto;padding:0 24px}
-header{display:flex;align-items:center;justify-content:space-between;padding:22px 24px;border-bottom:1px solid #d8dccf}
-.brand{font-size:25px;font-weight:800;letter-spacing:-1px;text-decoration:none}
-nav{display:flex;gap:24px}nav a{text-decoration:none}nav a.on{border-bottom:2px solid #39754a}
-main{padding-top:40px;padding-bottom:60px}
-h1{font-size:clamp(32px,5vw,48px);letter-spacing:-1.8px;line-height:1.05;margin:0 0 8px}
-.lede{color:#5c665d;font-size:16px;margin:0 0 28px;max-width:720px}
-section.vendor{background:#fffefa;border:1px solid #dedfd5;border-radius:14px;padding:22px 24px;margin:0 0 16px}
-.vhead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:6px}
-.vhead h2{font-size:22px;letter-spacing:-.5px;margin:0}
-.vhead a{font-size:13px;color:#6c7567;text-decoration:none}
-.chip{font-size:12px;border-radius:20px;padding:5px 11px;white-space:nowrap;border:1px solid #d4dccb;color:#6c7567;font-weight:600}
-.chip-win{background:#294e35;border-color:#294e35;color:#fff}
-.chip-lose{background:#f3e4e1;border-color:#e2c3bd;color:#8a3a30}
-.chip-open{background:#eef2e6;border-color:#d6dfca;color:#39754a}
-.listing{border-top:1px solid #ebede4;padding:16px 0 4px;margin-top:10px}
-.lmeta{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;font-size:13px;color:#67715f;margin-bottom:14px}
-.lmeta code{font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#252c25}
-.pill{font-size:11px;border:1px solid #d4dccb;border-radius:20px;padding:2px 8px;color:#6c7567}
-.pill-real{background:#294e35;border-color:#294e35;color:#fff}
-.funnel{display:grid;grid-template-columns:repeat(5,1fr);gap:0;border:1px solid #e3e5da;border-radius:10px;overflow:hidden;background:#fbfaf5}
-.step{padding:14px 16px;border-right:1px solid #e3e5da}
+.wrap{max-width:1180px;margin:auto;padding:0 24px 60px}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-bottom:2px solid var(--rule)}
+.brand{font-weight:900;font-size:26px;letter-spacing:-1.5px;text-decoration:none}
+.brand i{font-style:normal;color:var(--red)}
+nav{display:flex;gap:22px;font:13px var(--mono);text-transform:uppercase;letter-spacing:1px}
+nav a{text-decoration:none;border-bottom:2px solid transparent;padding-bottom:2px}nav a.on{border-color:var(--ink)}
+.kicker{font:12px var(--mono);letter-spacing:2px;text-transform:uppercase;color:var(--ink-2);margin:40px 0 10px}
+h1{font-size:clamp(38px,6vw,72px);line-height:.95;letter-spacing:-3px;margin:0 0 14px;font-weight:900;text-transform:uppercase}
+.lede{font:14px/1.6 var(--mono);color:var(--ink-2);margin:0 0 30px;max-width:760px}
+/* ledger sheets */
+section.vendor{background:var(--paper-2);border:2px solid var(--ink);margin:0 0 18px}
+.vhead{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 18px;border-bottom:2px solid var(--ink);background:#fff}
+.vhead h2{font-size:22px;letter-spacing:-.6px;margin:0;font-weight:900;text-transform:uppercase}
+.vhead a{font:12px var(--mono);color:var(--mute);text-decoration:none;margin-left:12px}
+.stamp{font:12px var(--mono);font-weight:700;letter-spacing:2px;text-transform:uppercase;border:2px solid currentColor;padding:3px 9px;transform:rotate(-4deg);white-space:nowrap}
+.stamp-win{color:var(--red)}
+.stamp-lose{color:var(--ink);border-style:double}
+.stamp-open{color:var(--ink-2)}
+.stamp-idle{color:var(--mute);border-style:dashed}
+.listing{padding:16px 18px 18px;border-top:1px dashed #b9b2a3}
+.listing:first-of-type{border-top:0}
+.lmeta{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;font:12px var(--mono);color:var(--ink-2);margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+.lmeta code{font-weight:700;color:var(--ink)}
+.pill{border:2px solid currentColor;padding:0 6px;font-weight:700;letter-spacing:1.5px}
+.pill-real{color:var(--red)}
+.funnel{display:grid;grid-template-columns:repeat(5,1fr);border:2px solid var(--ink);background:#fff}
+.step{padding:12px 14px;border-right:2px solid var(--ink)}
 .step:last-child{border-right:0}
-.step b{display:block;font-size:26px;letter-spacing:-1px;line-height:1.1;font-weight:700}
-.step b small{font-size:14px;color:#8a9484;font-weight:500;letter-spacing:0}
-.step span{display:block;font-size:11px;color:#6c7567;text-transform:uppercase;letter-spacing:1px;margin-top:4px}
-.step.hot b{color:#39754a}
-@media(max-width:760px){.funnel{grid-template-columns:repeat(2,1fr)}.step{border-bottom:1px solid #e3e5da}}
-.reasons{margin:14px 0 6px}
-.reasons .label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#6c7567}
-.reasons blockquote{margin:6px 0 0;padding:8px 14px;border-left:3px solid #c9d3bf;color:#3c463d;font-size:14px;background:#f7f8f2;border-radius:0 8px 8px 0}
-.empty{color:#8a9484;font-size:13px;margin:6px 0 0}
-section.idle{background:transparent;border-style:dashed}
-.idle-list{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:#5c665d;margin-top:8px}
-.idle-list strong{color:#252c25;font-weight:600}
-details.admin{margin-top:28px;border:1px dashed #cfd4c6;border-radius:12px;padding:14px 20px;color:#5c665d}
-details.admin summary{cursor:pointer;font-weight:600;color:#252c25}
+.step b{display:block;font:700 30px/1 var(--mono);letter-spacing:-1.5px}
+.step b small{font-size:14px;color:var(--mute);font-weight:500;letter-spacing:0}
+.step span{display:block;font:11px var(--mono);color:var(--ink-2);text-transform:uppercase;letter-spacing:1px;margin-top:6px}
+.step.hot b{color:var(--red)}
+@media(max-width:760px){.funnel{grid-template-columns:repeat(2,1fr)}.step{border-bottom:2px solid var(--ink)}}
+.reasons{margin:14px 0 4px}
+.reasons .label{font:11px var(--mono);text-transform:uppercase;letter-spacing:2px;color:var(--ink-2)}
+.reasons blockquote{margin:6px 0 0;padding:6px 12px;border-left:3px solid var(--ink);font:13px/1.6 var(--mono);color:var(--ink)}
+.empty{font:12px var(--mono);color:var(--mute);margin:4px 0 0;text-transform:uppercase;letter-spacing:1px}
+section.idle{border-style:dashed;background:transparent}
+section.idle .vhead{background:transparent;border-bottom:0}
+.idle-list{display:flex;flex-wrap:wrap;gap:8px 22px;font:12px var(--mono);color:var(--ink-2);padding:0 18px 16px}
+.idle-list strong{color:var(--ink)}
+details.admin{margin-top:28px;border:2px dashed #b9b2a3;padding:12px 18px;font:13px var(--mono);color:var(--ink-2)}
+details.admin summary{cursor:pointer;font-weight:700;color:var(--ink);text-transform:uppercase;letter-spacing:1px}
 details.admin section{background:transparent;border:0;padding:12px 0 0;margin:0}
-label{display:block;font-size:13px;margin:10px 0 2px;color:#4b544c}
-input,textarea{display:block;padding:10px;width:100%;margin:4px 0 8px;border:1px solid #cfd4c6;border-radius:6px;font:14px ui-monospace,SFMono-Regular,Menlo,monospace;background:#fff}
+label{display:block;font:12px var(--mono);margin:10px 0 2px;text-transform:uppercase;letter-spacing:1px}
+input,textarea{display:block;padding:10px;width:100%;margin:4px 0 8px;border:2px solid var(--ink);font:13px var(--mono);background:#fff}
 textarea{min-height:200px}
-button{background:#294e35;color:#fff;border:0;padding:11px 18px;border-radius:8px;cursor:pointer;font-weight:600}
-button.reject{background:#9e352d}
-.card{background:#fffefa;border:1px solid #dedfd5;border-radius:14px;padding:22px 24px;max-width:640px}
-code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
-pre{background:#1f2a21;color:#e8efe3;padding:14px 16px;border-radius:10px;overflow:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
-small{color:#6c7567}
-</style></head><body>
-<header><a class="brand" href="/">bodega<span style="color:#57924c">.</span></a><nav><a href="/">Storefront</a><a class="on" href="/portal">Vendor portal</a><a href="/llms.txt">Agent docs ↗</a></nav></header>
-<main><h1>${esc(title)}</h1>${options.lede ? `<p class="lede">${esc(options.lede)}</p>` : ""}${body}</main></body></html>`;
+button{background:var(--ink);color:var(--paper);border:0;padding:11px 18px;font:700 12px var(--mono);letter-spacing:2px;text-transform:uppercase;cursor:pointer}
+button.reject{background:var(--red)}
+.card{background:#fff;border:2px solid var(--ink);padding:22px 24px;max-width:640px;font:14px/1.7 var(--mono)}
+code{font:13px var(--mono);overflow-wrap:anywhere}
+pre{background:#fff;border:2px solid var(--ink);padding:14px 16px;overflow:auto;font:12px/1.5 var(--mono)}
+small{color:var(--mute)}
+</style></head><body><div class="wrap">
+<div class="bar"><a class="brand" href="/">bodega<i>.</i></a><nav><a href="/">Storefront</a><a class="on" href="/portal">Back office</a><a href="/llms.txt">Agent docs ↗</a></nav></div>
+<p class="kicker">Back office · vendor ledger</p>
+<h1>${esc(title)}</h1>${options.lede ? `<p class="lede">${esc(options.lede)}</p>` : ""}${body}</div></body></html>`;
 }
 
 function verdict(f: ListingFunnel[]): { cls: string; text: string } {
   const t = f.reduce((a, l) => ({ trials: a.trials + l.trials, chosen: a.chosen + l.chosen, rejected: a.rejected + l.rejected, purchases: a.purchases + l.purchases }), { trials: 0, chosen: 0, rejected: 0, purchases: 0 });
-  if (t.purchases > 0) return { cls: "chip-win", text: `Bought ${t.purchases}×` };
-  if (t.chosen > 0 && t.chosen >= t.rejected) return { cls: "chip-win", text: `Winning · chosen ${t.chosen}, rejected ${t.rejected}` };
-  if (t.rejected > t.chosen) return { cls: "chip-lose", text: `Losing · rejected ${t.rejected}, chosen ${t.chosen}` };
-  if (t.trials > 0) return { cls: "chip-open", text: `${t.trials} trial${t.trials === 1 ? "" : "s"}, no verdict yet` };
-  return { cls: "", text: "No trials yet" };
+  if (t.purchases > 0) return { cls: "stamp-win", text: `Sold ×${t.purchases}` };
+  if (t.chosen > 0 && t.chosen >= t.rejected) return { cls: "stamp-win", text: `Chosen ${t.chosen} · rejected ${t.rejected}` };
+  if (t.rejected > t.chosen) return { cls: "stamp-lose", text: `Rejected ${t.rejected} · chosen ${t.chosen}` };
+  if (t.trials > 0) return { cls: "stamp-open", text: `${t.trials} trial${t.trials === 1 ? "" : "s"} · no verdict` };
+  return { cls: "stamp-idle", text: "No trials yet" };
 }
 
 export function vendorCards(rows: Array<{ vendor: Vendor; funnel: VendorFunnel }>, listings: Listing[]): string {
@@ -80,22 +89,23 @@ export function vendorCards(rows: Array<{ vendor: Vendor; funnel: VendorFunnel }
   const live = active.filter((r) => activity(r) > 0 || isReal(r));
   const idle = active.filter((r) => !live.includes(r));
   const idleStrip = idle.length
-    ? `<section class="vendor idle"><div class="vhead"><div><h2>${idle.length} more vendor${idle.length === 1 ? "" : "s"}, no trials yet</h2><a>Simulated catalog entries: they appear here as soon as an agent starts a trial.</a></div></div><div class="idle-list">${idle
+    ? `<section class="vendor idle"><div class="vhead"><h2>${idle.length} more vendor${idle.length === 1 ? "" : "s"}, no trials yet</h2><span class="stamp stamp-idle">Simulated</span></div><div class="idle-list">${idle
         .map(({ vendor, funnel }) => `<span><strong>${esc(vendor.name.replace(/ \(mock\)$/, ""))}</strong> · ${funnel.listings.map((l) => `<code>${esc(l.listing_id)}</code>`).join(", ")}</span>`)
         .join("")}</div></section>`
     : "";
-  return live
-    .map(({ vendor, funnel }) => {
-      const v = verdict(funnel.listings);
-      const site = vendor.website.replace(/^https?:\/\//, "").replace(/\/$/, "");
-      const body = funnel.listings
-        .map((l) => {
-          const li = byId.get(l.listing_id);
-          const meta = li
-            ? `<code>${esc(l.listing_id)}</code><span>${money(li.price.buy_usd)} / ${esc(li.price.unit_label)}</span>${li.trial ? `<span>trial: ${li.trial.per_agent} ${esc(li.trial.unit).replace("_", " ")}, vendor-funded</span>` : `<span>buy-only</span>`}<span class="pill ${li.real ? "pill-real" : ""}">${li.real ? "Real provider" : "Simulated"}</span>`
-            : `<code>${esc(l.listing_id)}</code>`;
-          const reasons = l.top_reasons.filter(Boolean).slice(0, 3);
-          return `<div class="listing"><div class="lmeta">${meta}</div>
+  return (
+    live
+      .map(({ vendor, funnel }) => {
+        const v = verdict(funnel.listings);
+        const site = vendor.website.replace(/^https?:\/\//, "").replace(/\/$/, "");
+        const body = funnel.listings
+          .map((l) => {
+            const li = byId.get(l.listing_id);
+            const meta = li
+              ? `<code>${esc(l.listing_id)}</code><span>${money(li.price.buy_usd)} / ${esc(li.price.unit_label)}</span>${li.trial ? `<span>trial ${li.trial.per_agent} ${esc(li.trial.unit).replace("_", " ")} · vendor pays</span>` : `<span>buy only</span>`}<span class="pill ${li.real ? "pill-real" : ""}">${li.real ? "Real" : "Mock"}</span>`
+              : `<code>${esc(l.listing_id)}</code>`;
+            const reasons = l.top_reasons.filter(Boolean).slice(0, 3);
+            return `<div class="listing"><div class="lmeta">${meta}</div>
 <div class="funnel">
   <div class="step${l.trials ? " hot" : ""}"><b>${l.trials}</b><span>trials</span></div>
   <div class="step${l.checks_passed ? " hot" : ""}"><b>${l.checks_passed}<small>/${l.checks_run}</small></b><span>checks passed</span></div>
@@ -105,9 +115,10 @@ export function vendorCards(rows: Array<{ vendor: Vendor; funnel: VendorFunnel }
 </div>
 ${reasons.length ? `<div class="reasons"><span class="label">What agents said</span>${reasons.map((r) => `<blockquote>${esc(r)}</blockquote>`).join("")}</div>` : `<p class="empty">No agent has compared this listing yet.</p>`}
 </div>`;
-        })
-        .join("");
-      return `<section class="vendor"><div class="vhead"><div><h2>${esc(vendor.name)}</h2><a href="${esc(vendor.website)}" rel="noreferrer">${esc(site)}</a></div><span class="chip ${v.cls}">${esc(v.text)}</span></div>${body}</section>`;
-    })
-    .join("") + idleStrip;
+          })
+          .join("");
+        return `<section class="vendor"><div class="vhead"><div><h2>${esc(vendor.name)}</h2><a href="${esc(vendor.website)}" rel="noreferrer">${esc(site)}</a></div><span class="stamp ${v.cls}">${esc(v.text)}</span></div>${body}</section>`;
+      })
+      .join("") + idleStrip
+  );
 }
