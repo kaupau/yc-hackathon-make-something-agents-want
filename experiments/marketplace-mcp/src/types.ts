@@ -66,7 +66,7 @@ export const FEES: Record<string, number> = { poshmark: 0.2, mercari: 0.13, ebay
 export const inferSize = (title: string): string | null => {
   const t = ` ${title} `;
   const m = t.match(/\b(?:size|sz)[:\s]*((?:us\s*)?(?:\d{1,2}(?:\.5)?[a-z]?|xxs|xs|s|m|l|xl|xxl|xxxl|2xl|3xl)(?:\/[a-z0-9]+)?)\b/i)
-    ?? t.match(/\b(?:men'?s|women'?s|mens|womens|unisex)\s+(xxs|xs|s|m|l|xl|xxl|xxxl|small|medium|large|x-large|xlarge)\b/i)
+    ?? t.match(/\b(?:men[\u2019']?s|women[\u2019']?s|mens|womens|unisex)\s+(xxs|xs|s|m|l|xl|xxl|xxxl|small|medium|large|x-large|xlarge)\b/i)
     ?? t.match(/\s(xxs|xs|xl|xxl|xxxl|2xl|3xl)\s/i)
     ?? t.match(/\b(small|medium|large|x-large)\b/i);
   if (!m) return null;
