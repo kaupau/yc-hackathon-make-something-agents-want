@@ -120,7 +120,7 @@ function Board() {
                     {Array.isArray((o as any).comp_sample) && (o as any).comp_sample.length > 0 && <p className="nb-comps">based on {(o as any).comp_basis}: {(o as any).comp_sample.map((c: any, k: number) => <a key={k} href={c.url} onClick={go(c.url)}>{usd(c.usd)}{c.size ? ` (${c.size})` : ""}</a>)}</p>}
                     <a className="nb-title" href={l.url} onClick={go(l.url)}>{l.title}</a>
                     <p className={`nb-verdict ${v.tone}`}>{v.text}</p>
-                    <p className="nb-meta"><span className="nb-pill">{l.m}</span>{l.cond && <span>{l.cond}</span>}{l.size && <span>size {l.size}</span>}{l.ship != null && <span>+{usd(l.ship)} shipping</span>}{o.counterpart && <a href={o.counterpart.url} onClick={go(o.counterpart.url)}>photo compared with a {o.counterpart.marketplace} {(o.counterpart as any).sold ? "sale" : "listing"} at {usd(o.counterpart.price_usd)}</a>}</p>
+                    <p className="nb-meta"><span className="nb-pill">{l.m}</span>{l.cond && <span>{l.cond}</span>}{l.size && <span>size {l.size}</span>}{l.ship != null && <span>+{usd(l.ship)} shipping</span>}{(l as any).offer && <span>accepts offers</span>}{o.counterpart && <a href={o.counterpart.url} onClick={go(o.counterpart.url)}>photo compared with a {o.counterpart.marketplace} {(o.counterpart as any).sold ? "sale" : "listing"} at {usd(o.counterpart.price_usd)}</a>}</p>
                     <p className="nb-actions"><button onClick={() => expand(l)}>{open === `${l.m}:${l.id}` ? "Hide" : "Photos & details"}</button><a href={l.url} onClick={go(l.url)}>Open listing ↗</a></p>
                     {detail(l)}
                   </div>

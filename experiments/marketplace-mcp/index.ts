@@ -8,8 +8,8 @@ import { loadRegistry, register } from "./src/registry.js";
 import type { Listing } from "./src/types.js";
 
 /** Token-light listing for tool results: agents pay per token, so no raw payloads. */
-const compact = (l: Listing) => ({ m: l.marketplace, id: l.id, title: l.title.slice(0, 90), usd: l.price_usd, cond: l.condition, url: l.url, ...(l.image ? { img: l.image } : {}), ...(l.size ? { size: l.size } : {}), ...(l.rating != null ? { rating: l.rating, reviews: l.review_count } : {}), ...(l.sold ? { sold: true } : {}), ...(l.shipping_usd != null ? { ship: l.shipping_usd } : {}) });
-const compactSchema = z.object({ m: z.string(), id: z.string(), title: z.string(), usd: z.number().nullable(), cond: z.string().nullable(), url: z.string(), img: z.string().optional(), size: z.string().optional(), rating: z.number().nullable().optional(), reviews: z.number().nullable().optional(), sold: z.boolean().optional(), ship: z.number().nullable().optional() });
+const compact = (l: Listing) => ({ m: l.marketplace, id: l.id, title: l.title.slice(0, 90), usd: l.price_usd, cond: l.condition, url: l.url, ...(l.image ? { img: l.image } : {}), ...(l.size ? { size: l.size } : {}), ...(l.rating != null ? { rating: l.rating, reviews: l.review_count } : {}), ...(l.sold ? { sold: true } : {}), ...(l.shipping_usd != null ? { ship: l.shipping_usd } : {}), ...(l.best_offer ? { offer: true } : {}) });
+const compactSchema = z.object({ m: z.string(), id: z.string(), title: z.string(), usd: z.number().nullable(), cond: z.string().nullable(), url: z.string(), img: z.string().optional(), size: z.string().optional(), rating: z.number().nullable().optional(), reviews: z.number().nullable().optional(), sold: z.boolean().optional(), ship: z.number().nullable().optional(), offer: z.boolean().optional() });
 const arbitrageOutput = z.object({
   query: z.string(),
   reference: z.object({ sold_comps: z.number(), sold_median_usd: z.number().nullable(), sold_venues: z.array(z.string()).optional() }),
@@ -88,6 +88,27 @@ server.tool({
     register(d.cfg);
     return text({ added: d.cfg.name, template: d.cfg.template, item_prefix: d.cfg.item_prefix, listings_on_probe: d.cfg.sample_count, sample: d.sample.map(compact), tried: d.tried });
   } catch (e: any) { return text({ error: e.message }); }
+});
+
+export const scanTool = server.tool({
+  name: "scan",
+  description: "Hunt flips across many products at once: runs arbitrage for each query (sequentially, within a time budget) and returns the best genuine-looking flip per product ranked by net profit, plus how many sold comps backed it and how fast it sells. Use it to find which product lines are worth working. Slow: ~20-40 s per query.",
+  inputSchema: z.object({ queries: z.array(z.string().min(2)).min(1).max(12), min_net_usd: z.number().min(0).default(25), min_spread_pct: z.number().min(0).max(0.9).default(0.2), budget_s: z.number().int().min(30).max(600).default(300).describe("stop starting new queries after this many seconds") }),
+  outputSchema: z.object({ ran: z.number(), skipped: z.array(z.string()), results: z.array(z.object({ query: z.string(), sold_comps: z.number(), live: z.number(), flips: z.number(), suspected_replicas: z.number(), best: z.object({ listing: compactSchema, buy_usd: z.number(), sell_est_usd: z.number(), comps_venue: z.string(), comps_n: z.number(), demand_label: z.string(), net_profit_usd: z.number(), margin_pct: z.number(), catch_risk: z.number().optional(), photo_match: z.number().nullable().optional() }).nullable(), error: z.string().optional() })) }),
+  annotations: { readOnlyHint: true, openWorldHint: true },
+}, async ({ queries, min_net_usd, min_spread_pct, budget_s }) => {
+  const t0 = Date.now(); const results: any[] = []; const skipped: string[] = [];
+  for (const q of queries) {
+    if ((Date.now() - t0) / 1000 > budget_s) { skipped.push(q); continue; }
+    try {
+      const r = await arbitrage(q, { limit: 5, min_net_usd, min_spread_pct });
+      const clean = r.opportunities.find((o) => !o.suspected_replica && (o.catch_risk ?? 0) < 0.6);
+      results.push({ query: q, sold_comps: r.reference.sold_comps, live: r.considered, flips: r.opportunities.length, suspected_replicas: r.opportunities.filter((o) => o.suspected_replica).length, best: clean ? { listing: compact(clean.listing), buy_usd: clean.buy_usd, sell_est_usd: clean.sell_est_usd, comps_venue: clean.comps_venue, comps_n: clean.comps_n, demand_label: clean.demand_label, net_profit_usd: clean.net_profit_usd, margin_pct: clean.margin_pct, catch_risk: clean.catch_risk, photo_match: clean.photo_match } : null });
+    } catch (e: any) { results.push({ query: q, sold_comps: 0, live: 0, flips: 0, suspected_replicas: 0, best: null, error: e.message.split("\n")[0] }); }
+  }
+  results.sort((a, b) => (b.best?.net_profit_usd ?? -1) - (a.best?.net_profit_usd ?? -1));
+  const lines = results.map((r) => r.best ? `${r.query}: buy ${r.best.listing.m} $${r.best.buy_usd} → ~$${r.best.sell_est_usd} on ${r.best.comps_venue} (${r.best.comps_n} sold, ${r.best.demand_label}) net ~$${r.best.net_profit_usd}${r.suspected_replicas ? `; ${r.suspected_replicas} replica-suspect skipped` : ""}` : `${r.query}: no clean flip (${r.sold_comps} sold comps, ${r.live} live${r.error ? `, ${r.error}` : ""})`);
+  return text({ ran: results.length, skipped, results, summary: lines.join(" | ") }) as any;
 });
 
 export default server;

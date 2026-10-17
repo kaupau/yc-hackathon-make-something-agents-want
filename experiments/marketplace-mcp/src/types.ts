@@ -20,6 +20,8 @@ export interface Listing {
   size?: string | null;
   brand?: string | null;
   sponsored?: boolean;
+  /** seller accepts offers (eBay "or Best Offer"): expect to buy ~10% under ask */
+  best_offer?: boolean;
 }
 
 export interface SearchOptions {

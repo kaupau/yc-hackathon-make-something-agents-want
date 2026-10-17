@@ -29,7 +29,7 @@ function fromMarkdown(md: string, links: string[], sold: boolean, images: string
     const prices = [...text.matchAll(/\$\s?([\d,]+(?:\.\d\d)?)/g)].map((m) => Number(m[1].replace(/,/g, "")));
     const ship = text.match(/\+\$\s?([\d,]+(?:\.\d\d)?)/)?.[1];
     const id = ids[i] ?? `md-${i}`;
-    return { marketplace: "ebay", id, title, price_usd: prices[0] ?? null, condition: cond, url: `https://www.ebay.com/itm/${id}`, image: imgs[i] ?? null, shipping_usd: ship ? Number(ship.replace(/,/g, "")) : /Free (shipping|delivery)/i.test(text) ? 0 : null, sold };
+    return { marketplace: "ebay", id, title, price_usd: prices[0] ?? null, condition: cond, url: `https://www.ebay.com/itm/${id}`, image: imgs[i] ?? null, best_offer: /or Best Offer/i.test(text), shipping_usd: ship ? Number(ship.replace(/,/g, "")) : /Free (shipping|delivery)/i.test(text) ? 0 : null, sold };
   }).filter(Boolean);
 }
 
