@@ -23,7 +23,7 @@ export interface Opportunity {
   listing: Listing; tier: Tier;
   buy_usd: number; ship_usd: number;
   sell_est_usd: number; comps_n: number; comps_venue: string; comps_tier: string; comp_basis: string; comp_sample: { title: string; usd: number; url: string; size?: string | null }[]; demand: number; demand_label: string; fee_pct: number; ship_assumed?: boolean;
-  net_profit_usd: number; margin_pct: number;
+  net_profit_usd: number; margin_pct: number; net_if_offer_usd?: number;
   // kept for the board and older clients
   reference_usd: number; reference_from: string; spread_usd: number; spread_pct: number;
   relevance: number; counterpart?: { marketplace: string; url: string; price_usd: number | null; sold?: boolean }; photo_match?: number | null; catch_risk?: number; catch_reason?: CatchReason; replica_risk?: number; suspected_replica?: boolean;
@@ -80,7 +80,8 @@ export async function arbitrage(query: string, opts: { limit?: number; min_sprea
     const liveOnVenue = byMarket[venue]?.n ?? 0, soldOnVenue = byMarket[venue]?.sold_n ?? 0;
     const demand = soldOnVenue / Math.max(1, liveOnVenue);
     const demandLabel = demand >= 1 ? "sells fast" : demand >= 0.4 ? "steady" : "slow";
-    opps.push({ listing: l, tier: t, buy_usd: buy, ship_usd: ship, ship_assumed: shipAssumed, sell_est_usd: Math.round(sell), comps_n: basisPool.length, comps_venue: venue, comps_tier: compsTier, comp_basis: basis, comp_sample: basisPool.slice(0, 3).map((c) => ({ title: c.title.slice(0, 70), usd: c.price, url: c.url, size: c.size ?? null })), demand: r2(demand), demand_label: demandLabel, fee_pct: fee, net_profit_usd: Math.round(net), margin_pct: r2(margin), reference_usd: Math.round(sell), reference_from: `trimmed median of ${basisPool.length} sold on ${venue} (${compsTier}; ${basis})`, spread_usd: Math.round(sell - buy), spread_pct: r2((sell - buy) / sell), relevance: r2(r) });
+    const netOffer = l.best_offer ? Math.round(sell * (1 - fee) - buy * 0.9 - ship) : undefined;
+    opps.push({ listing: l, tier: t, buy_usd: buy, ship_usd: ship, ship_assumed: shipAssumed, net_if_offer_usd: netOffer, sell_est_usd: Math.round(sell), comps_n: basisPool.length, comps_venue: venue, comps_tier: compsTier, comp_basis: basis, comp_sample: basisPool.slice(0, 3).map((c) => ({ title: c.title.slice(0, 70), usd: c.price, url: c.url, size: c.size ?? null })), demand: r2(demand), demand_label: demandLabel, fee_pct: fee, net_profit_usd: Math.round(net), margin_pct: r2(margin), reference_usd: Math.round(sell), reference_from: `trimmed median of ${basisPool.length} sold on ${venue} (${compsTier}; ${basis})`, spread_usd: Math.round(sell - buy), spread_pct: r2((sell - buy) / sell), relevance: r2(r) });
   }
   opps.sort((a, b) => b.net_profit_usd - a.net_profit_usd);
   const top = opps.slice(0, Math.max(opts.limit ?? 5, 8));
