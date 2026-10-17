@@ -5,3 +5,25 @@ dist/
 *.log
 .DS_Store
 .mcp-use/cloud/link.json
+.bodega/
+.projects/vault/
+.projects/cache/
+
+# InsForge & AI agent skills
+.insforge
+.agent
+.agents
+.augment
+.claude
+.cline
+.github/copilot*
+.kilocode
+.qoder
+.qwen
+.roo
+.trae
+.windsurf
+
+!.env.example
+.insforge/
+.claude/skills/

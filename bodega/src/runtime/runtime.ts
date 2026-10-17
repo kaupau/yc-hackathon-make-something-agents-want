@@ -127,7 +127,7 @@ export class ManagedTrialRuntime implements TrialRuntime {
     }));
     const passing = results.filter(r => r.ok).sort((a, b) => ((a.metrics.send_ms ?? 0) + (a.metrics.deliver_ms ?? 0)) - ((b.metrics.send_ms ?? 0) + (b.metrics.deliver_ms ?? 0)) || a.loc - b.loc);
     const best = passing[0];
-    const simulated = this.backend.mode === 'simulated';
+    const simulated = this.backend.mode === 'simulated' || results.some(r=>r.logs_tail?.startsWith('[SIMULATED'));
     const report: ComparisonReport = { id: `cmp-${randomUUID()}`, check_id, session_id, results, suggestion: simulated ? null : best?.listing_id ?? null, reason: simulated ? 'Simulated comparison only; no real provider performance recommendation' : best ? 'Lowest total latency among passing self-loop checks' : 'No provider passed', created_at: new Date(this.now()).toISOString() };
     await this.services.ledger.recordComparison(report);
     return report;
@@ -150,7 +150,7 @@ export class ManagedTrialRuntime implements TrialRuntime {
   }
   private async expire(trial: Trial): Promise<void> { await this.services.ledger.updateTrial(trial.id, { status: 'expired' }); await this.end(trial.id); }
   async reapExpired(): Promise<void> {
-    await Promise.all([...this.owned].map(async id => { const trial = await this.services.ledger.getTrial(id); if (trial && (Date.parse(trial.expires_at) <= this.now() || ['ended', 'expired'].includes(trial.status))) await this.expire(trial); }));
+    await Promise.all([...this.owned].map(async id => { const trial = await this.services.ledger.getTrial(id); if (trial && ['ended', 'expired', 'exhausted'].includes(trial.status)) await this.end(id); else if (trial && Date.parse(trial.expires_at) <= this.now()) await this.expire(trial); }));
   }
   async close(): Promise<void> { clearInterval(this.timer); await Promise.all([...this.owned].map(id => this.end(id))); }
 }

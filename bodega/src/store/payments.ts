@@ -5,7 +5,7 @@ import Stripe from 'stripe';
 
 export const BODEGA_SANDBOX_ACCOUNT = 'acct_1URdmN2M1S84n0j8';
 export interface PaymentOrder {
-  id: string; sessionId: string; listingId: string; amountCents: number; currency: 'usd'; idempotencyKey: string;
+  id: string; sessionId: string; listingId: string; amountCents: number; currency: 'usd'; idempotencyKey: string; paymentMode?: 'mpp';
 }
 export interface PaymentResult {
   status: 'paid' | 'pending' | 'declined'; paymentIntentId?: string; error?: string;
@@ -15,7 +15,7 @@ export interface PaymentProvider {
   charge(order: PaymentOrder): Promise<PaymentResult>;
   inspect(order: PaymentOrder, paymentIntentId: string): Promise<PaymentResult>;
   /** Verified notification only; caller must deduplicate event IDs and independently inspect current PI state. */
-  verifyWebhook(raw: Buffer, signature: string): { eventId: string; paymentIntentId: string } | null;
+  verifyWebhook(raw: Buffer, signature: string): { eventId: string; paymentIntentId: string; purchaseId?: string } | null;
 }
 export interface StripeIntentSnapshot {
   id: string; status: string; livemode: boolean; amount: number; amount_received: number; currency: string; metadata: Record<string, string>;
@@ -26,7 +26,7 @@ export interface StripePaymentClient {
     create(params: Stripe.PaymentIntentCreateParams, options: Stripe.RequestOptions): Promise<StripeIntentSnapshot>;
     retrieve(id: string): Promise<StripeIntentSnapshot>;
   };
-  webhooks: { constructEvent(raw: Buffer, signature: string, secret: string): { id: string; type: string; livemode: boolean; account?: string; data: { object: { id?: string; object?: string } } } };
+  webhooks: { constructEvent(raw: Buffer, signature: string, secret: string): { id: string; type: string; livemode: boolean; account?: string; data: { object: { id?: string; object?: string; metadata?: Record<string,string> | null } } } };
 }
 export interface StripePaymentsOptions {
   secretKey: string; accountId: string; webhookSecret?: string; stripeClient?: StripePaymentClient;
@@ -36,7 +36,7 @@ function validateOrder(order: PaymentOrder): void {
   for (const value of [order.id, order.sessionId, order.listingId]) if (!value || value.length > 200) throw new Error('Invalid payment order binding');
   if (!order.idempotencyKey || order.idempotencyKey.length > 255) throw new Error('A stable idempotency key is required');
 }
-const binding = (order: PaymentOrder) => ({ purchase_id: order.id, session_id: order.sessionId, listing_id: order.listingId, bodega_account_id: BODEGA_SANDBOX_ACCOUNT, bodega_payment_mode: 'sandbox-test-card-fallback', bodega_attempt_hash: createHash('sha256').update(order.idempotencyKey).digest('hex') });
+export const paymentBinding = (order: PaymentOrder) => ({ purchase_id: order.id, session_id: order.sessionId, listing_id: order.listingId, bodega_account_id: BODEGA_SANDBOX_ACCOUNT, bodega_payment_mode: order.paymentMode??'sandbox-test-card-fallback', bodega_attempt_hash: createHash('sha256').update(order.idempotencyKey).digest('hex') });
 const fingerprint = (order: PaymentOrder) => createHash('sha256').update(JSON.stringify(order)).digest('hex');
 
 export function createMockPayments(options: { behavior?: 'paid' | 'pending' | 'declined' | ((order: PaymentOrder) => PaymentResult['status']) } = {}): PaymentProvider {
@@ -79,7 +79,7 @@ function buildStripeProvider(stripe: StripePaymentClient, options: { webhookSecr
     if (account.deleted || account.id !== BODEGA_SANDBOX_ACCOUNT) throw new Error('Stripe authenticated account does not match Bodega sandbox');
   }
   function verifyReceipt(order: PaymentOrder, intent: StripeIntentSnapshot, expectedId: string): PaymentResult {
-    const failedBinding = intent.id !== expectedId || !/^pi_[A-Za-z0-9]+$/.test(intent.id) || intent.livemode !== false || intent.amount !== order.amountCents || intent.currency !== order.currency || Object.entries(binding(order)).some(([key, value]) => intent.metadata?.[key] !== value);
+    const failedBinding = intent.id !== expectedId || !/^pi_[A-Za-z0-9]+$/.test(intent.id) || intent.livemode !== false || intent.amount !== order.amountCents || intent.currency !== order.currency || Object.entries(paymentBinding(order)).some(([key, value]) => intent.metadata?.[key] !== value);
     if (failedBinding) return { status: 'pending', paymentIntentId: expectedId, error: 'Receipt verification failed; purchase remains blocked' };
     if (intent.status === 'succeeded') {
       if (intent.amount_received !== order.amountCents) return { status: 'pending', paymentIntentId: intent.id, error: 'Receipt amount received does not match order' };
@@ -103,7 +103,7 @@ function buildStripeProvider(stripe: StripePaymentClient, options: { webhookSecr
       let intentId: string | undefined;
       try {
         await verifyAccount();
-        const intent = await stripe.paymentIntents.create({ amount: order.amountCents, currency: order.currency, confirm: true, payment_method: 'pm_card_visa', automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, metadata: binding(order), description: 'Bodega sandbox test-card fallback (simulated card; no human funds)' }, { idempotencyKey: order.idempotencyKey });
+        const intent = await stripe.paymentIntents.create({ amount: order.amountCents, currency: order.currency, confirm: true, payment_method: 'pm_card_visa', automatic_payment_methods: { enabled: true, allow_redirects: 'never' }, metadata: paymentBinding(order), description: 'Bodega sandbox test-card fallback (simulated card; no human funds)' }, { idempotencyKey: order.idempotencyKey });
         intentId = intent.id;
         // The create response is never itself a receipt gate.
         return await inspect(order, intentId);
@@ -125,15 +125,15 @@ function buildStripeProvider(stripe: StripePaymentClient, options: { webhookSecr
         if (!['payment_intent.succeeded', 'payment_intent.processing', 'payment_intent.payment_failed', 'payment_intent.canceled'].includes(event.type)) return null;
         const object = event.data.object;
         if (object.object !== 'payment_intent' || typeof object.id !== 'string' || !/^pi_[A-Za-z0-9]+$/.test(object.id)) return null;
-        return { eventId: event.id, paymentIntentId: object.id };
+        return { eventId: event.id, paymentIntentId: object.id, ...(object.metadata?.purchase_id?{purchaseId:object.metadata.purchase_id}:{}) };
       } catch { return null; }
     },
   };
 }
 
-export function getMppReadiness(options: { profileId?: string; buyerSptConfigured?: boolean } = {}): { ready: boolean; missing: string[]; note: string } {
-  const missing = [!options.profileId ? 'STRIPE_PROFILE_ID' : '', !options.buyerSptConfigured ? 'Buyer SPT wallet/token provider' : ''].filter(Boolean);
-  return { ready: false, missing: [...missing, 'Official MPP HTTP challenge/credential adapter'], note: 'Configuration readiness only. The direct PaymentProvider uses an explicitly labeled sandbox test-card fallback. Official mppx HTTP challenge/credential integration and end-to-end receipt verification still require implementation.' };
+export function getMppReadiness(options: { profileId?: string; buyerSptConfigured?: boolean; serverConfigured?: boolean } = {}): { ready: boolean; missing: string[]; note: string } {
+  const missing = [!options.profileId ? 'STRIPE_PROFILE_ID' : '', !options.buyerSptConfigured ? 'Buyer SPT wallet/token provider' : '', !options.serverConfigured ? 'Test SDK key and MPP_SECRET_KEY' : ''].filter(Boolean);
+  return { ready: missing.length===0, missing, note: 'Official mppx Stripe HTTP adapter is implemented. End-to-end Stripe SPT commerce requires preview access and a buyer wallet. Direct mode remains an explicitly labeled sandbox test-card fallback.' };
 }
 
 export interface StripeCliPaymentsOptions {

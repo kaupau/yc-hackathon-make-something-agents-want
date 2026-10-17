@@ -155,7 +155,7 @@ export interface Review {
   created_at: string;
 }
 
-export type PurchaseStatus = "paid" | "needs_approval" | "declined";
+export type PurchaseStatus = "paid" | "needs_approval" | "declined" | "ready" | "charging" | "pending";
 
 export interface Purchase {
   id: string;

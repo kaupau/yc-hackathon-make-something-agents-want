@@ -59,7 +59,7 @@ export class DurableLedger implements Ledger {
     return this.db.transaction(() => {
       const trial = this.db.get<Trial>("trial", id); if (!trial) throw new Error("Unknown trial");
       for (const field of ["id", "session_id", "listing_id", "token", "used", "limit", "unit", "expires_at", "started_at"] as const) if (patch[field] !== undefined && patch[field] !== trial[field]) throw new Error(`Trial ${field} is immutable; use recordUsage`);
-      if (["ended", "expired", "exhausted"].includes(trial.status) && patch.status && patch.status !== trial.status) throw new Error("Terminal trial cannot be reactivated");
+      if (patch.status && patch.status !== trial.status && ((["ended", "expired"].includes(trial.status)) || (trial.status === "exhausted" && !["ended", "expired"].includes(patch.status)))) throw new Error("Terminal trial cannot be reactivated");
       const next = { ...trial, ...patch }; this.db.put("trial", id, next); return next;
     });
   }

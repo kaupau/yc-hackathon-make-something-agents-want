@@ -40,7 +40,7 @@ function summarize(kind: string, value: unknown): unknown {
   const r = object(value);
   if (kind === "need") {
     const listings = Array.isArray(value) ? value : Array.isArray(r?.listings) ? r.listings : null;
-    if (listings) return listings.slice(0,8).map(v => { const l=object(v) ?? {}; const trial=object(l.trial); return {id:l.id,vendor:l.vendor_id,name:l.name,description:typeof l.one_line === "string"?clip(l.one_line,130):undefined,price:l.price,trial:trial?{per_agent:trial.per_agent,unit:trial.unit,pool_left:Number(trial.pool_total)-Number(trial.pool_used),funded_by:l.vendor_id}:null,checks:l.checks}; });
+    if (listings) return listings.slice(0,8).map(v => { const l=object(v) ?? {}; const trial=object(l.trial); return {id:l.id,vendor:l.vendor_id,name:l.name,description:typeof l.one_line === "string"?clip(l.one_line,130):undefined,price:l.price,trial:trial?{per_agent:trial.per_agent,unit:trial.unit,pool_left:Number(trial.pool_total)-Number(trial.pool_used),funded_by:l.vendor_id}:null,integration:l.provider_integration,checks:l.checks}; });
   }
   if (kind === "compare" && Array.isArray(r?.results)) return {id:r.id,check_id:r.check_id,suggestion:r.suggestion,reason:r.reason,results:r.results.slice(0,8).map(v=>{const c=object(v)??{};return {listing_id:c.listing_id,trial_id:c.trial_id,ok:c.ok,metrics:c.metrics,loc:c.loc,error:c.error};})};
   if (kind === "run_trial" && r) return {trial_id:r.trial_id,exit_code:r.exit_code,duration_ms:r.duration_ms,stdout:typeof r.stdout === "string"?clip(r.stdout,400):r.stdout,stderr:typeof r.stderr === "string"?clip(r.stderr,240):r.stderr,quota:r.quota};
@@ -83,7 +83,7 @@ export function createStoreMcp(session: StoreSession, options: StoreMcpOptions):
     return result;
   }));
   server.registerTool("wallet", {description:"Show human-funded cap, approval threshold, spent/reserved/remaining funds, purchases and vendor-funded trial usage.",inputSchema:z.object({}).strict()}, ()=>invoke("wallet",()=>session.wallet()));
-  server.registerTool("review", {description:"Record why a provider was chosen or rejected in its vendor funnel.",inputSchema:z.object({listing_id:id,verdict:z.enum(["chosen","rejected","neutral"]),reason:z.string().min(1).max(2000)}).strict()}, ({listing_id,verdict,reason})=>invoke("review",()=>session.review(listing_id,verdict,reason)));
+  server.registerTool("review", {description:"Record why a provider was chosen or rejected in its vendor funnel.",inputSchema:z.object({listing_id:id,verdict:z.enum(["chosen","rejected","neutral"]),reason:z.string().min(1).max(500)}).strict()}, ({listing_id,verdict,reason})=>invoke("review",()=>session.review(listing_id,verdict,reason)));
   server.registerTool("use", {description:"Use an entitled purchased provider tool. Headless fallback for clients that do not refresh dynamic tools. Checks payment and session entitlement on every call.",inputSchema:z.object({listing_id:id,tool:z.string().min(1).max(128),args:argsSchema.default({})}).strict()}, ({listing_id,tool,args})=>invoke("use",()=>session.use(listing_id,tool,args)));
 
   const dynamic = new Map<string,Set<string>>();

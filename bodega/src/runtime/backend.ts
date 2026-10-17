@@ -66,7 +66,7 @@ export async function createBlaxelSandboxBackend(sdk?: BlaxelSDK): Promise<Sandb
   return {
     mode: 'blaxel',
     async create(input) {
-      await api.create({ name: input.id, image: input.image, memory: 1024, ttl: `${input.ttlSeconds}s`, labels: { app: 'bodega', managedBy: 'trial-runtime' }, envs: Object.entries(input.env).map(([name, value]) => ({ name, value })) });
+      await api.create({ name: input.id, image: input.image, memory: 1024, region: process.env.BL_REGION ?? 'us-pdx-1', ttl: `${input.ttlSeconds}s`, labels: { app: 'bodega', managedBy: 'trial-runtime' }, envs: Object.entries(input.env).map(([name, value]) => ({ name, value })) });
       return input.id;
     },
     async exec(id, input) {
