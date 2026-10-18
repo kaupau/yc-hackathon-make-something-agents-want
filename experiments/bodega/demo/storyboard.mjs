@@ -35,6 +35,7 @@ export default {
   narration: {
     provider: "elevenlabs",
     voice: "SAz9YHcvj6GT2YYXdXww",
+    settings: { stability: 0.6, similarity_boost: 0.8, style: 0.1, speed: 0.9 },
     model: "eleven_multilingual_v2",
     apiKeyCommand: "doppler secrets get ELEVENLABS_API_KEY -p airwave -c dev --plain",
     lead: 0.5, tail: 0.6,
@@ -47,14 +48,16 @@ export default {
 
     { type: "scene", name: "title", layout: "title", duration: 6.4, backdrop: "plain",
       transition: { type: "fade", duration: 0.5 },
-      narration: "Agents only have the tools a human wired in before the task started. Bodega lets them shop mid-task.",
-      props: { eyebrow: "Make something agents want", title: "A corner store\nwhere the customer\nis an agent.", subtitle: "Find it. Try it. Put it to work." } },
+      narration: "Agents only have the tools a human set up for them. Bodega is a store where the agent shops for itself.",
+      props: { eyebrow: "Make something agents want", title: "A store where\nthe agent\nis the customer.", subtitle: "Find a tool. Try it free. Buy it within budget." } },
 
     { type: "app", name: "home", start: "/", transition: { type: "fade", duration: 0.6 },
       zoom: { from: 1, to: 1.03, at: [0.3, 0.35] },
-      narration: "Vendors fund free trials. Humans set a cap and an approval threshold. Every number on that receipt is live from the ledger, including what it charged humans for trials: nothing.",
+      narration: "This is the store. Vendors pay for the trials. The human sets the budget. The receipt is live: trials so far, purchases, and zero dollars charged to humans.",
       action: async (d) => {
-        await d.hold(1.6);
+        await d.caption("Vendors fund the trials. Humans set the budget.", "The store", { position: "top" });
+        await d.hold(3.2);
+        await d.clearCaption();
         await d.focus(".receipt", { fill: 0.5 });
         await d.hold(4.2);
         await d.unfocus();
@@ -65,10 +68,12 @@ export default {
 
     { type: "app", name: "shelf", start: "/", transition: { type: "fade", duration: 0.45 },
       zoom: { from: 1, to: 1.03, at: [0.5, 0.6] },
-      narration: "Eleven listings on the shelf: price tags, free-trial stickers, and an honest stamp. Two providers are real today, Primitive and Inkbox. The rest are marked mock.",
+      narration: "Eleven tools on the shelf, each with a price and a free trial. Two providers are real today. The rest are honestly marked as mock.",
       action: async (d) => {
         await d.scrollTo(".shelf-head", { duration: 1.2, margin: 40 });
-        await d.hold(1.0);
+        await d.caption("Price, free trial, and an honest REAL or MOCK stamp", "The shelf", { position: "top" });
+        await d.hold(2.6);
+        await d.clearCaption();
         await d.focus(".shelf-row article >> nth=0", { fill: 0.42 });
         await d.hold(2.6);
         await d.unfocus();
@@ -79,45 +84,52 @@ export default {
 
     { type: "scene", name: "ch1", layout: "chapter", duration: 4.0, backdrop: "plain",
       transition: { type: "fade", duration: 0.4 },
-      narration: "Here is one agent doing the whole loop, for real.",
+      narration: "Here is one agent, start to finish, for real.",
       props: { num: "01", eyebrow: "Claude Code, Bodega plugin", title: "An agent shops." } },
 
-    { type: "scene", name: "terminal", layout: "terminal", duration: 28.4, backdrop: "plain",
+    { type: "scene", name: "terminal", layout: "terminal", duration: 27, backdrop: "plain",
       transition: { type: "fade", duration: 0.5 },
-      narration: "Claude Code asks for two-way email. Need returns three candidates. Compare boots real Blaxel sandboxes and runs an email round trip through Bodega's metering proxy, on the vendors' dime. Primitive passes in about a second; the other two fail, and say why. The agent buys Primitive for two dollars, under the human's threshold: a real Stripe sandbox receipt, tools unlocked, three dollars left. Then it reviews all three, so every vendor learns why it won or lost.",
+      narration: "The agent asks for email tools. Three come back, each with a free trial. It tries all three in real sandboxes. Only Primitive passes, in about a second. It buys Primitive for two dollars. Paid, with a receipt. Then it tells each vendor why it won or lost.",
       props: {
-        eyebrow: "Real run · 12 turns · 25 s · $0.26", title: "need → compare → buy → review", size: 23, cps: 30,
+        eyebrow: "One real run · Claude Code + the Bodega plugin", title: "Find. Try. Buy. Review.", size: 27, cps: 22,
         lines: [
-          { cmd: 'claude "Our support bot must email customers and read their replies. Find a provider, prove it works, buy it within $5."', pause: 500 },
-          { out: '<span class="dim">⏺</span> bodega:need(<span class="dim">"two-way email for a support bot"</span>)', gap: 80 },
-          { out: '  primitive-email $2.00 · inkbox-email $1.50 · postpigeon-email $0.90  <span class="dim">vendor-funded trials</span>', gap: 420 },
-          { out: '<span class="dim">⏺</span> bodega:compare([primitive, inkbox, postpigeon], <span class="dim">email.roundtrip</span>)', gap: 700 },
-          { out: '  <span class="ok">✓</span> primitive-email   send 738 ms · deliver 270 ms   <span class="dim">real Blaxel sandbox</span>', gap: 120 },
-          { out: '  ✗ inkbox-email      HTTP 502 <span class="dim">no provider key configured</span>', gap: 120 },
-          { out: '  ✗ postpigeon-email  HTTP 401 <span class="dim">receive refused</span>', gap: 120 },
-          { out: '  <span class="dim">→ suggestion:</span> primitive-email, lowest latency among passing checks', gap: 520 },
-          { out: '<span class="dim">⏺</span> bodega:buy(<span class="dim">"primitive-email"</span>)   $2.00 of $5.00 · under the $3 threshold', gap: 160 },
-          { out: '  <span class="ok">paid</span> · receipt pi_3URqmh2M1S84n0j812RwPky6 · Stripe sandbox', gap: 120 },
-          { out: '  tools unlocked: send_email, ask_by_email', gap: 420 },
-          { out: '<span class="dim">⏺</span> bodega:wallet()   spent $2.00 · $3.00 left · 1,000 credits', gap: 420 },
-          { out: '<span class="dim">⏺</span> bodega:review(primitive, <span class="ok">chosen</span>) · review(inkbox, rejected) · review(postpigeon, rejected)', gap: 300 },
+          { cmd: 'claude "Our support bot needs email. Find a tool, prove it works, buy it within $5."', pause: 700 },
+          { out: '<span class="dim">⏺</span> need   →  3 email tools, all with free trials', gap: 1600 },
+          { out: '<span class="dim">⏺</span> compare  <span class="dim">(real sandboxes)</span>', gap: 500 },
+          { out: '   <span class="ok">✓</span> Primitive   send 738 ms · deliver 270 ms', gap: 400 },
+          { out: '   ✗ Inkbox      no key configured', gap: 300 },
+          { out: '   ✗ PostPigeon  receive refused', gap: 1500 },
+          { out: '<span class="dim">⏺</span> buy Primitive  $2.00 of $5.00', gap: 500 },
+          { out: '   <span class="ok">paid</span> · Stripe receipt pi_3URqmh… · tools unlocked', gap: 1600 },
+          { out: '<span class="dim">⏺</span> review  Primitive <span class="ok">chosen</span> · Inkbox rejected · PostPigeon rejected', gap: 400 },
         ],
       } },
 
     { type: "scene", name: "ch2", layout: "chapter", duration: 4.0, backdrop: "plain",
       transition: { type: "fade", duration: 0.4 },
-      narration: "Now the part no human would ever want to do.",
+      narration: "Now something no human would ever want to do.",
       props: { num: "02", eyebrow: "Swarm floor", title: "Six agents,\none store." } },
 
     { type: "app", name: "swarm", start: "/", transition: { type: "fade", duration: 0.6 },
       zoom: { from: 1, to: 1.025, at: [0.5, 0.45] },
-      narration: "Six agents with six different jobs shop at the same time. Separate wallets, scripted humans answering approval emails, and a shared board so nobody repeats a trial. One purchase gets vetoed. One agent hits its cap and Bodega refuses it server-side.",
+      narration: "Six agents, six jobs, one store, all at once. Each has its own budget, and its own human approving by email. They share what they learn, so nobody repeats a trial. One purchase gets declined. One is refused at the cap.",
       action: async (d) => {
         swarmProc = spawn("npm", ["run", "swarm", "--", "--pace", "2", "--bodega-port", "8791"], { cwd: SWARM_DIR, stdio: "ignore", detached: true });
-        await d.hold(7);
+        // Wait only until the floor answers, and record how long that took so the segment can be
+        // trimmed to start on the floor rather than on whatever page the shot opened with.
+        const t0 = Date.now();
+        for (let i = 0; i < 60; i++) {
+          try { const r = await fetch("http://127.0.0.1:8790/"); if (r.ok) break; } catch {}
+          await new Promise((r) => setTimeout(r, 250));
+        }
         await d.page.goto("http://127.0.0.1:8790/", { waitUntil: "domcontentloaded" });
-        await d.settle(0.6);
+        await d.settle(0.8);
+        const { writeFileSync, mkdirSync } = await import("node:fs");
+        mkdirSync(path.join(import.meta.dirname, "out", ".work"), { recursive: true });
+        writeFileSync(path.join(import.meta.dirname, "out", ".work", "swarm-wait.json"), JSON.stringify({ seconds: (Date.now() - t0) / 1000 + 1.2 }));
+        await d.caption("Six agents, separate budgets, humans approving by email", "Swarm floor", { position: "top" });
         await d.hold(6.5);
+        await d.clearCaption();
         await d.scroll(420, { duration: 1.3 });
         await d.hold(5.0);
         await d.freeze();
@@ -127,9 +139,11 @@ export default {
 
     { type: "app", name: "portal", start: "/portal", transition: { type: "fade", duration: 0.5 },
       zoom: { from: 1, to: 1.03, at: [0.4, 0.4] },
-      narration: "The back office is the vendor's view: trials, checks passed, chosen or rejected, revenue, and what the agents said. Primitive sold. Inkbox and PostPigeon learn why they lost.",
+      narration: "Vendors get the back office. Who tried it, who chose it, who paid, and what the agent said. Primitive sold. The other two learn why they lost.",
       action: async (d) => {
-        await d.hold(1.2);
+        await d.caption("Vendors see who tried, who bought, and why", "Back office", { position: "top" });
+        await d.hold(3.0);
+        await d.clearCaption();
         await d.focus("section.vendor >> nth=0", { fill: 0.78 });
         await d.hold(4.6);
         await d.unfocus();
@@ -138,18 +152,18 @@ export default {
         await d.hold(0.5);
       } },
 
-    { type: "scene", name: "stack", layout: "features", duration: 11, backdrop: "plain",
+    { type: "scene", name: "stack", layout: "features", duration: 12, backdrop: "plain",
       transition: { type: "fade", duration: 0.5 },
-      narration: "Under the hood: hosted on Railway and metered through Manufact's gateway. Sandboxes on Blaxel. Email through Primitive. Payments and the Machine Payments Protocol on Stripe. Shared state in InsForge. And a Claude Code plugin, so any agent can shop here.",
-      props: { eyebrow: "Built this weekend on", title: "Sponsors as inventory.", items: [
-        { icon: "▣", title: "Manufact + Railway", body: "One MCP server, eight tools, fronted by the Manufact gateway" },
-        { icon: "◫", title: "Blaxel + Primitive", body: "Real sandboxes run real email round trips on the vendor's dime" },
-        { icon: "◎", title: "Stripe + InsForge", body: "Sandbox receipts, MPP over MCP, shared wallets and funnels" },
+      narration: "Built this weekend on the sponsors: one MCP server through Manufact, sandboxes on Blaxel, email on Primitive, payments on Stripe, shared state in InsForge, and a Claude Code plugin.",
+      props: { eyebrow: "Built this weekend on", title: "The sponsors are the inventory.", items: [
+        { icon: "▣", title: "Manufact", body: "One MCP server, eight tools, behind the Manufact gateway" },
+        { icon: "◫", title: "Blaxel + Primitive", body: "Real sandboxes, real email round trips, paid by the vendor" },
+        { icon: "◎", title: "Stripe + InsForge", body: "Sandbox receipts, shared wallets, vendor funnels" },
       ] } },
 
     { type: "scene", name: "outro", layout: "outro", duration: 4.0, backdrop: "plain",
       transition: { type: "fade", duration: 0.75 },
-      narration: "Bodega. Tools for agents. Nothing pre-installed.",
-      props: { wordmark: "bodega.", subtitle: "Tools for agents. Nothing pre-installed.", url: "github.com/kaupau/yc-hackathon-make-something-agents-want" } },
+      narration: "Bodega. Tools for agents.",
+      props: { wordmark: "bodega.", subtitle: "Tools for agents.", url: "github.com/kaupau/yc-hackathon-make-something-agents-want" } },
   ],
 };
