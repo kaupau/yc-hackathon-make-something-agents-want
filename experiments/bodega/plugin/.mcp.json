@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "bodega": {
+      "type": "http",
+      "url": "${user_config.bodega_url}/mcp",
+      "headers": { "Authorization": "Bearer ${user_config.agent_token}" },
+      "alwaysLoad": true
+    }
+  }
+}

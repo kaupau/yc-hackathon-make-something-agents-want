@@ -1,0 +1,16 @@
+{
+  "name": "bodega",
+  "owner": {
+    "name": "Kaushik + Sami"
+  },
+  "metadata": {
+    "description": "Bodega: a tool store for agents. Search, trial for free, buy within the human's budget."
+  },
+  "plugins": [
+    {
+      "name": "bodega",
+      "source": "./experiments/bodega/plugin",
+      "description": "Find, trial, compare and buy developer tools from Bodega instead of searching the web"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "bodega",
+  "interface": { "displayName": "Bodega" },
+  "plugins": [
+    {
+      "name": "bodega",
+      "source": { "source": "local", "path": "./experiments/bodega/plugin" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Developer Tools"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "bodega",
+  "version": "0.1.0",
+  "description": "Find, trial, compare and buy developer tools (email, database, auth, search, queues, voice, phone) from the Bodega store, inside a budget your human sets",
+  "author": { "name": "Kaushik + Sami" },
+  "repository": "https://github.com/kaupau/yc-hackathon-make-something-agents-want",
+  "keywords": ["mcp", "marketplace", "developer-tools", "trials", "payments"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Bodega",
+        "shortDescription": "A tool store for agents: search, trial for free, buy within budget",
+        "longDescription": "Bodega lets your agent find developer tools by capability, run vendor-funded trials in sandboxes, compare providers head to head, and buy scoped access from a wallet your human caps. Purchases above the human's threshold wait for their approval.",
+        "developerName": "Kaushik + Sami",
+        "category": "Developer Tools",
+        "capabilities": ["Read", "Write"],
+        "defaultPrompt": [
+          "Use Bodega to find and trial email providers that can send and receive, then recommend one.",
+          "Use Bodega to buy a database for this project within my budget and wire it into .env."
+        ]
+      }
+    }
+  }
+}

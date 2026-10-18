@@ -1,0 +1,81 @@
+Customer isolation handoff (branch codex/customer-isolation, uncommitted)
+=========================================================================
+
+What changed
+- src/identity/repository.ts  IdentityRepository seam; SqliteIdentityRepository (offline default,
+                              .bodega/identity.sqlite, 0600) and InsforgeIdentityRepository (server-only
+                              RPC via createAdminClient; injected RpcCall for tests). Backend error text is
+                              never surfaced (it may echo parameters); 23505 -> CONFLICT.
+- src/identity/service.ts     IdentityService: validation (id ^[a-z0-9][a-z0-9_-]{2,63}$, email, cents
+                              0..10,000,000, threshold<=cap, ttl 1..365 days, default 90), 256-bit
+                              "bdg_agt_" tokens, SHA-256 digests only, issue/rotate/revoke/activate,
+                              Principal resolution. Legacy BODEGA_AGENT_TOKEN -> legacy principal only.
+                              Presented-but-invalid credentials never fall back to anonymous.
+- src/identity/admin.ts       Admin-only JSON API + static operator console (/admin/customers/console).
+                              Raw token returned once in create/issue responses; list omits token & hash.
+                              Unknown body fields rejected (no client-chosen tokens/active/etc).
+- src/server.ts               Lazy Storefront per principal (Map<walletId, Promise<Storefront>>), wallet id
+                              "customer:<id>" (legacy wallet id may not use that prefix), budget/email from
+                              identity record; await state.ensureSession before constructing.
+                              MCP sessions bound to principalId; foreign session id -> 404 (same as unknown);
+                              auth checked on every request (revocation is immediate locally).
+                              Per-principal session cap (BODEGA_MAX_MCP_SESSIONS_PER_PRINCIPAL, default 10)
+                              evicts that principal's own oldest session.
+                              Proxy keys resolved globally via state.resolveToken/consume (bearer capability);
+                              use/buy stay principal-scoped through each Storefront.
+                              /mpp authenticates X-Bodega-Agent-Token per principal and uses that principal's
+                              cached mpp handler (handler already 404s foreign purchases).
+                              Webhooks look up attempt by payment/purchase id, resolve owner via
+                              identity.principalForWallet(session_id), reconcile in owner's storefront.
+                              /admin/approvals lists pending approvals across legacy + all customers with
+                              customer_id/approver_email. isAdmin refuses if admin token == agent token.
+                              /health reports identity backend + whether credentials are required.
+                              All state.* calls in server.ts are awaited (compatible with async WalletStore).
+                              store/wallet.ts and store/storefront.ts NOT modified.
+- src/main.ts                 Non-loopback binding allowed with a >=24 char legacy token OR per-customer
+                              credentials required (BODEGA_IDENTITY_BACKEND=insforge or BODEGA_REQUIRE_AGENT_AUTH=1).
+- scripts/customers.ts + "npm run customers"   operator CLI (list/create/rotate/issue/revoke/disable/enable).
+- migrations/20261017210002_customer-identities.sql  NEW (existing applied migration untouched).
+- README.md, .env.example     docs/env.
+- src/identity/identity.test.ts  11 HTTP/unit tests (see below).
+
+Env
+- BODEGA_IDENTITY_BACKEND=sqlite|insforge (insforge requires INSFORGE_URL + INSFORGE_API_KEY, else startup throws)
+- BODEGA_IDENTITY_DB_PATH (sqlite path; ":memory:" automatically when wallet is ":memory:")
+- BODEGA_REQUIRE_AGENT_AUTH=1 disables anonymous legacy access (implied by insforge)
+- BODEGA_AUTH_CACHE_MS positive auth cache (default 5000 for insforge, 0 for sqlite, max 60000); cleared
+  locally on any admin mutation. Other replicas may honor a revoked token for up to this window.
+- BODEGA_MAX_MCP_SESSIONS_PER_PRINCIPAL (default 10)
+- createApplication({ identity, identityPath }) injection seam for tests.
+
+Root actions required
+1. Apply migrations/20261017210002_customer-identities.sql (npx -y @insforge/cli db migrations up 20261017210002).
+   I could NOT validate the SQL against Postgres here (no local DB; no cloud access). Review: tables
+   bodega_customers / bodega_agent_credentials, RLS enabled with no policies, REVOKE from PUBLIC/anon/
+   authenticated, GRANT to project_admin; RPCs bodega_create_customer, bodega_get_customer,
+   bodega_list_customers, bodega_set_customer_active, bodega_add_agent_credential,
+   bodega_revoke_agent_credential, bodega_authenticate_agent (SECURITY INVOKER, pinned search_path,
+   EXECUTE only for project_admin). Assumes the admin API key runs as project_admin (as the existing
+   catalog migration does). Immutability triggers guard ids/hash/binding and prevent un-revoking.
+2. Set BODEGA_IDENTITY_BACKEND=insforge on Railway (INSFORGE_URL/API_KEY already present) and keep
+   BODEGA_VENDOR_ADMIN_TOKEN distinct from BODEGA_AGENT_TOKEN. Provision customers via the console/CLI.
+3. Merge: server.ts conflicts with the async-WalletStore worker are expected; my server code already awaits
+   ensureSession/hasEvent/markEvent/byPayment/get/list/resolveToken/consume/close.
+
+Known limitations / follow-ups
+- Budget changes after creation are not exposed: WalletStore.ensureSession is insert-or-ignore, so a cap
+  edit in the identity table would not reach the wallet. Add a wallet policy update in wallet.ts first.
+- Wallet/attempts remain in local SQLite (or whatever the async WalletStore worker provides); identity
+  can be remote. Approval links show the wallet id ("customer:<id>") to the approver.
+- Storefront cache is unbounded but limited to admin-provisioned customers.
+- No public signup/passwords; no notifications/Connect (root owns those).
+
+Tests run (in bodega/): npm ci; npm run typecheck (clean); npm test -> 56/56 pass; npm run build OK.
+Identity tests cover: non-admin (none/legacy/customer/wrong token) cannot create or list customers;
+one-time token, listing omits token/hash; input validation + no extra fields; duplicate 409; two customers
+over HTTP MCP cannot share session IDs (404), wallets, purchases (use denied) or trials (run_trial denied);
+legacy token isolated; reconnect + full restart do not replenish budget; rotation keeps wallet and kills old
+token; revoke/deactivate/malformed tokens 401 with no anonymous fallback; expiry; approvals use customer
+email and agent tokens cannot approve or read the inbox; webhook reconciles owner wallet; /mpp per-principal
+dispatch (401 / foreign 404 / owner reaches handler); InsForge RPC seam sends only hashes and hides backend
+error text; operator console static + protected API; per-principal session eviction.
