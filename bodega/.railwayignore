@@ -1,0 +1,10 @@
+.env
+.env.*
+.bodega
+node_modules
+.cache
+dist
+.insforge
+.mcp-use
+*.log
+AGENTS.md

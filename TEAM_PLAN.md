@@ -230,6 +230,55 @@ Sources checked 2026-10-17: [Projects](https://docs.stripe.com/projects), [Direc
 
 ---
 
+## Manufact: Railway underneath, Manufact in front (Plan A, decided 2026-10-17 ~15:30 PT)
+
+Bodega stays on Railway (`https://bodega-production-4802.up.railway.app`, one replica, volume at `/app/.bodega`, Blaxel runtime, Stripe sandbox, InsForge shared backends). Manufact sits in front of it as a **direct external server with the proxy enabled**, which gives the Manufact judges their public MCP URL, gateway analytics/sessions, Inspector, Testing and publish checks, with zero change to trials, proxy, payments or storage. Hosting the container on Manufact was rejected: nothing in their docs covers volumes, replica count, or whether `/proxy/:token` and `/portal` are forwarded, and the demo cannot afford two deployments to keep in sync.
+
+Verified while planning: Manufact's REST API accepts the key the `mcp-use` CLI stores after `npx mcp-use login` (`Authorization: Bearer <apiKey>` on `https://api.manufact.com/api/v1/...`, read with `GET /api/v1/servers`). The dashboard "Connect an existing server" form only offers OAuth for upstream auth; bearer upstream auth is REST-only, which is why step 2 is a curl.
+
+### Steps
+
+**1. Amedeo: redeploy Railway from the merged UI branch.** Merge PR #3 (`bodega/ui` → `codex/storefront`), then redeploy the Railway service from `codex/storefront` so the hosted storefront and back office show the corner-store look. Check: `curl -s https://bodega-production-4802.up.railway.app/ | grep -c "TOOLS"` returns 1 and `/health` still reports `runtime: blaxel`, `payments: stripe-sandbox`.
+
+**2. Whoever holds the Railway `BODEGA_AGENT_TOKEN` (Amedeo): create the external server on Manufact.** Run from any shell; `MANUFACT_KEY` is `apiKey` from `~/.mcp-use/config.json` on a machine that has run `npx mcp-use login` (Kaushik's has). Organization: `135f4b98-4737-4e1d-87e5-665dc8df1389 (org-21861a5c-nwz58)`.
+
+```bash
+curl -s https://api.manufact.com/api/v1/servers \
+  -H "Authorization: Bearer $MANUFACT_KEY" -H "content-type: application/json" \
+  -d '{"type":"external","organizationId":"<org id above>","name":"bodega",
+       "url":"https://bodega-production-4802.up.railway.app/mcp",
+       "auth":{"type":"bearer","token":"<Railway BODEGA_AGENT_TOKEN>"}}'
+```
+
+Copy `id` from the response, then enable the proxy:
+
+```bash
+curl -s -X POST https://api.manufact.com/api/v1/servers/<id>/proxy -H "Authorization: Bearer $MANUFACT_KEY"
+```
+
+The response's `mcpUrl` is the Manufact gateway URL. That is the URL in the demo's `claude mcp add` and on the slide. Never paste the Railway token into the repo, Slack or the PR; it goes into that one shell.
+
+**3. Kaushik: dashboard pass (about five minutes).** In manufact.com → Servers → `bodega`: open **Inspector** and call `need("agent email")` so the first tool calls land; open **Publish checks** in the sidebar (under Publish) and run them once for the slide; open **Analytics** and leave it on the second screen during the demo. In **Settings** the card should read "Manufact proxy" (the REST call did that); "Downgrade to external URL" reverts it if anything misbehaves.
+
+**4. Rehearse against the gateway URL, not Railway.** `claude mcp add --transport http bodega <mcpUrl>` with no bearer header (the gateway holds the upstream auth). Fresh `BODEGA_WALLET_ID` is a Railway env var, so each full rehearsal that buys something needs Amedeo to rotate it or the wallet shows yesterday's spend. Trials never reset per session either.
+
+### Executed 2026-10-17 ~16:15 PT (Kaushik's session, with a Railway project token from Amedeo)
+- Railway redeployed from `bodega/ui` (merged UI on top of codex/storefront) with `railway up --service bodega` from `bodega/`, plus a `.railwayignore` so `.env`, `.bodega`, `node_modules`, `.cache`, `.insforge` never upload. Deployment `18c0fab2` SUCCESS 23:14:51Z; `/health` unchanged (blaxel, stripe-sandbox, insforge-shared); home and back office serve the corner-store UI.
+- Manufact external server created by REST (`POST /api/v1/servers`, type external, bearer upstream auth), id `c9ef7d21-f8fd-4faa-a745-070e95d043c3`, slug `warm-spark-aqsz0`; proxy enabled. **Gateway URL: `https://warm-spark-aqsz0.run.mcp-use.com/mcp`.** Verified: initialize + `tools/list` through the gateway returns all eight tools.
+- **Gotcha:** the gateway forwards the client's `Authorization` header; it does not inject the stored upstream bearer for client traffic (that one is for Manufact's own Inspector/Testing). So clients still send the token:
+
+```bash
+claude mcp add --transport http bodega https://warm-spark-aqsz0.run.mcp-use.com/mcp \
+  --header "Authorization: Bearer $BODEGA_AGENT_TOKEN"
+```
+
+- Cloudflare in front of `api.manufact.com` rejects Python's default user agent (error 1010); use curl or set a UA.
+
+### Open items
+- `/.well-known/mpp` returns 404 on Railway, so MPP payment discovery is not published. Fix only if the Stripe judge asks.
+- The branch is built on the official MCP SDK, not mcp-use. Manufact asked for mcp-use TypeScript; the answer on stage is "any server, connected and metered through Manufact," and the marketplace-mcp experiment (merged, hosted on Manufact as `dark-spark-ysobu`) is the mcp-use-built one.
+- Inkbox credentials are still absent, so the three-way `compare` is Primitive versus the PostPigeon mock.
+
 ## Risks
 
 New, on top of PLAN.md §6.
