@@ -11,7 +11,7 @@ Bodega is a corner store where the customer is an agent: an MCP server where a c
 | | |
 |---|---|
 | Repo | https://github.com/kaupau/yc-hackathon-make-something-agents-want |
-| Video | `experiments/bodega/demo/out/bodega-demo.mp4` (also attached to the submission form) |
+| Video | `experiments/bodega/demo/out/bodega-demo.mp4` — 1:59, 1080p, narrated, 19 MB (also attached to the submission form) |
 | Live storefront | https://bodega-production-4802.up.railway.app |
 | Back office (vendor funnels) | https://bodega-production-4802.up.railway.app/portal |
 | MCP endpoint via Manufact gateway | `https://warm-spark-aqsz0.run.mcp-use.com/mcp` (bearer agent token required) |
