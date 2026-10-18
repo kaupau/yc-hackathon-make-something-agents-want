@@ -41,7 +41,7 @@ export default {
   },
 
   shots: [
-    { type: "scene", name: "sting", layout: "sting", duration: 3.0, backdrop: "plain",
+    { type: "scene", name: "sting", layout: "sting", duration: 1.8, backdrop: "plain",
       transition: { type: "cut" },
       props: { wordmark: "bodega.", subtitle: "tools for agents", size: 190 } },
 
@@ -82,7 +82,7 @@ export default {
       narration: "Here is one agent doing the whole loop, for real.",
       props: { num: "01", eyebrow: "Claude Code, Bodega plugin", title: "An agent shops." } },
 
-    { type: "scene", name: "terminal", layout: "terminal", duration: 30, backdrop: "plain",
+    { type: "scene", name: "terminal", layout: "terminal", duration: 28.4, backdrop: "plain",
       transition: { type: "fade", duration: 0.5 },
       narration: "Claude Code asks for two-way email. Need returns three candidates. Compare boots real Blaxel sandboxes and runs an email round trip through Bodega's metering proxy, on the vendors' dime. Primitive passes in about a second; the other two fail, and say why. The agent buys Primitive for two dollars, under the human's threshold: a real Stripe sandbox receipt, tools unlocked, three dollars left. Then it reviews all three, so every vendor learns why it won or lost.",
       props: {
@@ -147,7 +147,7 @@ export default {
         { icon: "◎", title: "Stripe + InsForge", body: "Sandbox receipts, MPP over MCP, shared wallets and funnels" },
       ] } },
 
-    { type: "scene", name: "outro", layout: "outro", duration: 5.5, backdrop: "plain",
+    { type: "scene", name: "outro", layout: "outro", duration: 4.0, backdrop: "plain",
       transition: { type: "fade", duration: 0.75 },
       narration: "Bodega. Tools for agents. Nothing pre-installed.",
       props: { wordmark: "bodega.", subtitle: "Tools for agents. Nothing pre-installed.", url: "github.com/kaupau/yc-hackathon-make-something-agents-want" } },
